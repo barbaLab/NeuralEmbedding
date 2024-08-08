@@ -12,6 +12,7 @@ nUnits = unique(nUnits);
 %% Dout
 Dout = arrayfun(@(idx) Din(idx).data,...
     1:nTrial,'UniformOutput',false);
+Dout = Dout(:);
 
 %% TrialL
 TrialL = arrayfun(@(idx) size(Din(idx).data,2),...

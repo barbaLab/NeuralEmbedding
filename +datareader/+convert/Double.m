@@ -8,6 +8,7 @@ optsDefault = structfun(@isempty,opts,'UniformOutput',false);
 [nUnits,TrialL,nTrial] = size(Din);
 Dout = arrayfun(@(idx) sparse(Din(:,:,idx)),...
     1:nTrial,'UniformOutput',false);
+Dout = Dout(:);
 if ~optsDefault.time
     TrialTime = opts.time;
 else
