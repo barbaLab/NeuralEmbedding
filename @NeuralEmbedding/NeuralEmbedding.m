@@ -66,7 +66,7 @@ classdef NeuralEmbedding < handle & ...
 
         nUnits double
         nTrial double
-
+        nArea  double
     end
 
     properties (Access = private)
@@ -117,7 +117,8 @@ classdef NeuralEmbedding < handle & ...
             end
             
             obj.D_ = D;
-            obj.E_  = cell(nTrial,1 + numel(unique(Area)));
+            obj.nArea = numel(unique(Area));
+            obj.E_  = cell(nTrial,1 + obj.nArea);
             obj.TrialTime_ = TrialTime;
 
             obj.nUnits = nUnits;
@@ -159,21 +160,26 @@ classdef NeuralEmbedding < handle & ...
         function value = get.S(obj)
             amask = obj.aMask;
             cmask = obj.cMask;
-            if obj.zscore
-                value = cellfun(@(x)(x(amask,obj.tMask) - obj.mu(amask))...
-                    ./obj.ss(amask),...
-                    obj.S_(cmask),...
-                    'UniformOutput',false);
-            else
-                value = cellfun(@(x)x(amask,obj.tMask),...
-                    obj.S_(cmask),...
-                    'UniformOutput',false);
+
+            value = cell(obj.nTrial,size(amask,1));
+            for amIdx = 1:size(amask,1)
+                if obj.zscore
+                    value(:,amIdx) = cellfun(@(x)(x(amask(amIdx,:),obj.tMask)...
+                        - obj.mu(amask(amIdx,:)))...
+                        ./obj.ss(amask(amIdx,:)),...
+                        obj.S_(cmask),...
+                        'UniformOutput',false);
+                else
+                    value(amIdx) = cellfun(@(x)x(amask,obj.tMask),...
+                        obj.S_(cmask),...
+                        'UniformOutput',false);
+                end
             end
         end
 
         % Returns embedded data
         function value = get.E(obj)
-            amask = strcmp(obj.aMask_,obj.UArea);
+            amask = ismember(obj.UArea,obj.aMask_);
             cmask = obj.cMask;
             value = obj.E_(cmask,amask);
         end
@@ -231,7 +237,7 @@ classdef NeuralEmbedding < handle & ...
         function value = get.aMask(obj)
             if obj.useaMask
                 str = obj.aMask_;
-                value = strcmp(obj.Area,str);
+                value = obj.Area == str';
                 if strcmp(str,"AllNeurons")
                     value = value | 1;
                 end
@@ -243,7 +249,7 @@ classdef NeuralEmbedding < handle & ...
         end
         function set.aMask(obj,val)
             if isstring(val) &&...
-                    any(strcmp(obj.UArea,val))
+                    any(ismember(obj.UArea,val))
                 obj.aMask_ = val;
             elseif isstring(val) &&...
                     val == "" || strcmpi(val,"none") || strcmpi(val,"all")
