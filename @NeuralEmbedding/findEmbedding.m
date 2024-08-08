@@ -45,16 +45,17 @@ switch deblank(type)
             flag = false;
             return;
         end
-    case {'justCCA','justcca'}
-        [E,obj.ProjMatrix,obj.VarExplained] = ...
-            smoothjustCCA(D,pars_);
     case {'umap','UMAP'}
-        [E,obj.ProjMatrix,obj.VarExplained] = ...
-            smoothUMAP(D,pars_);
+        type = "UMAP";
+        fprintf("%s support is WIP. Stay tuned!%s",type,newline);
+        % [E,obj.ProjMatrix,obj.VarExplained] = ...
+        %     smoothUMAP(D,pars_);
 
     case {'t-SNE','tsne','tSNE','t-sne'}
-        [E,obj.ProjMatrix,obj.VarExplained] = ...
-            smoothTSNE(D,pars_);
+        type = "tSNE";
+        fprintf("%s support is WIP. Stay tuned!%s",type,newline);
+        % [E,obj.ProjMatrix,obj.VarExplained] = ...
+        %     smoothTSNE(D,pars_);
 
     case {'I','identity','noproject','noProject'}
         type = "I";
