@@ -27,8 +27,24 @@ switch deblank(type)
             return;
         end
     case {'CCA','cca'}
-        [E,obj.ProjMatrix,obj.VarExplained] = ...
-            smoothCCA(D,pars_);
+        type = "CCA";
+        parNames = ["numPC","nArea","nTrial","TrialL"];
+        pars = obj.assignEPars(parNames,type);
+        try
+            D = cell(obj.nTrial,obj.nArea);
+            a = 1;
+            for aa = obj.UArea(1:end-1)
+                obj.aMask = aa;
+                D(:,a) = obj.S;
+                a = a + 1;
+            end
+            obj.aMask = obj.UArea(1:end-1);
+            [E,obj.ProjMatrix,obj.VarExplained] = ...
+                embedding.CCA(D,pars);
+        catch er
+            flag = false;
+            return;
+        end
     case {'justCCA','justcca'}
         [E,obj.ProjMatrix,obj.VarExplained] = ...
             smoothjustCCA(D,pars_);
@@ -64,7 +80,7 @@ if obj.Reproject
 end
 
 % smooth data
-amask = strcmp(obj.aMask_,obj.UArea);
+amask = ismember(obj.UArea,obj.aMask_);
 obj.E_(:,amask) = cellfun(@(x)NeuralEmbedding.smoother(x,...
             obj.prekern,obj.causalSmoothing,obj.subsampling,obj.useGpu),...
             E,'UniformOutput',false);
