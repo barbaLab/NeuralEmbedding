@@ -1,4 +1,14 @@
-function flag = findEmbedding(obj,type)
+function [E,ProjMatrix,VarExplained] = findEmbedding(obj,type)
+% This function computes the embedding of the data using the specified
+% algorithm. Supported algorithms are PCA, GPFA, CCA, UMAP, t-SNE, and
+% Identity. If the algorithm is not recognized, it throws an error.
+%
+% The function takes as input the data to be embedded, the type of
+% embedding to be used, and the parameters for the embedding algorithm.
+%
+% The output is the embedded data, the projection matrix, and the
+% explained variance ratio.
+
 flag = true;
 
 switch deblank(type)

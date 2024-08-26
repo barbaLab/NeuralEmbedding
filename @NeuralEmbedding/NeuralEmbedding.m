@@ -93,10 +93,16 @@ classdef NeuralEmbedding < handle & ...
     %% Constructor
     methods
         function obj = NeuralEmbedding(D,opts)
-            %% NEURALEMBEDDING Construct an instance of NeuralEmbedding class.
-            % D input neural data. D can be a:
-            % 1x nTrial struct array with at least a data field nNueronsxT
-            % nNueronsxTxnTrial double (or sparse) array
+       % NEURALEMBEDDING Construct an instance of NeuralEmbedding class.
+        %   OBJ = NeuralEmbedding(D) creates an instance of NeuralEmbedding
+        %   class, where D is either a 1x nTrial struct array with at least a
+        %   data field nNueronsxT or nNueronsxTxnTrial double (or sparse) array.
+        %   All the optional parameters are passed through the opts structure.
+        %   The available options are:
+        %       time : (1,:) time vector, if empty it is assumed to be
+        %       fs   : (1,:) sampling frequency (in Hz)
+        %       area : (1,:) area labels for each unit/channel
+        %       condition : (1,:) condition labels for each trial
             arguments
                 D
                 opts.time           (1,:) {mustBeNumeric} = []
@@ -107,30 +113,43 @@ classdef NeuralEmbedding < handle & ...
             end
 
 
+            % Determine the type of data
             if datareader.is.Struct(D,opts)
+                % If D is a struct convert it to the standard format
                 [D,TrialTime,nUnits,nTrial,Condition,Area] = ...
                     datareader.convert.Struct(D,opts);
-
             elseif datareader.is.Double(D,opts)
+                % If D is a numeric array convert it to the standard format
                 [D,TrialTime,nUnits,nTrial,Condition,Area] = ...
                     datareader.convert.Double(D,opts);
             end
             
+            % Store the raw data
             obj.D_ = D;
+            % Store the number of areas
             obj.nArea = numel(unique(Area));
+            % Pre-allocate the embedded data
             obj.E_  = cell(nTrial,1 + obj.nArea);
+            % Store the original trial time
             obj.TrialTime_ = TrialTime;
-
+            % Store the original time mask
+            obj.tMask_ = true(size(obj.TrialTime_));
+            
+            % Store the number of units and trials
             obj.nUnits = nUnits;
             obj.nTrial = nTrial;
+            % Store the condition labels
             obj.Conditions = Condition;
+            % Store the area labels
             obj.Area = Area;
             
-            obj.tMask = true(size(obj.TrialTime_));
-            
+            % Remove inactive neurons
             obj.removeInactiveNeurons();
+            % Bin the data
             obj.binData();
+            % Smooth the data
             obj.smoothData();
+            % Z-score the data
             obj.zscoreData();
 
         end
@@ -259,8 +278,15 @@ classdef NeuralEmbedding < handle & ...
             end
         end
 
-        % Returns up to date aMask .
+        % Returns up to date cMask .
         function value = get.cMask(obj)
+            % GET.CMASK get condition mask
+            %
+            %   val = get.cMask() returns the condition mask.
+            %
+            %   The condition mask is a logical array that marks the trials that
+            %   satisfy the condition mask. If the condition mask is not specified,
+            %   all trials are marked as true.
             if obj.usecMask
                 str = obj.cMask_;
                 value = strcmp(obj.Conditions,str);
@@ -274,6 +300,18 @@ classdef NeuralEmbedding < handle & ...
             if obj.calledByBase,fprintf(1,'cMask (i.e. condition mask) set to %s.\n',str);end;
         end
         function set.cMask(obj,val)
+            % SET.CMASK set condition mask
+            %
+            %   set.cMask(val) sets the condition mask to the string
+            %   val. If the condition mask is not specified, all trials
+            %   are marked as true.
+            %
+            %   val can be
+            %
+            %   - a string matching one of the conditions in
+            %     obj.UConditions
+            %   - "" or "none" to set condition mask to all conditions
+            %   - "all" to set condition mask to all conditions
             if isstring(val) &&...
                     any(strcmp(obj.UConditions,val))
                 obj.cMask_ = val;
@@ -289,24 +327,41 @@ classdef NeuralEmbedding < handle & ...
     methods (Access = private)
         function loadDefaultPars(obj)
             %LOADDEFUALTPARS load defualt parameters
+            %   This function loads default parameters for the neural
+            %   embedding algorithm. The parameters loaded here are
+            %   used if the user does not specify them during
+            %   initialization.
            
+            % number of principal components to keep
             pars_.numPC = 3;
 
+            % split units
             pars_.splitUnits = [0 size(D(1).data,1)];
+            % time vector
             obj.t = obj.TrialTime;
 
+            % sequence test
             pars_.seqTest = false(1,numel(D));
 
+            % end leg range
             pars_.endLeg_range = [1:250 size(D(1).data,2)-250:size(D(1).data,2)];
+            % interest range
             pars_.interest_range = (-250:250)+0.5*size(D(1).data,2);
+            % cca reference signal
             pars_.ccaRefSig = [];
 
+            % supervise by conditions
             pars_.SuperviseByConditions = false;
 
+            % reference data
             pars_.D_ref = {nan};
 
+            % number of reference data sets
             N_Ref = length(pars_.D_ref);
+            % number of areas
             N_Areas = length(pars_.splitUnits)-1;
+            % if there are more areas than reference data sets, make
+            % sure there are enough reference data sets
             if N_Ref ~= N_Areas
                 [pars_.D_ref{N_Ref+1:N_Areas}] = deal(nan);
             end
@@ -314,27 +369,50 @@ classdef NeuralEmbedding < handle & ...
         end
     
         function removeInactiveNeurons(obj)
-
+        %% removeInactiveNeurons - removes inactive neurons from the data
+        % and replaces them with random spikes
+        %
+        % This function removes neurons with spike rates below a threshold
+        % and replaces them with random spikes.
+        %
+        % Parameters:
+        %   obj - the NeuralEmbedding object
+        %
+        % Returns:
+        %   nothing
+        
+            % copy the data into the preprocessed data structure
             obj.P_ = obj.D_;
 
+            % find the time difference between the last and first trial
             TT = abs(obj.TrialTime(end) - obj.TrialTime(1));
+
+            % find the neurons with spike rates below the threshold
             thSpikeRate = cellfun(@(d) (sum(d,2) ./ TT) < obj.FRateLim,...
                 obj.D_,...
                 'UniformOutput',false);
             thSpikeRate = sum([thSpikeRate{:}],2) > (obj.nTrial * obj.acceptanceRatio);
 
+            % get the indices of the inactive neurons
             nanidx = false(size(obj.P_{1},1),1);
             for nn = 1:numel(obj.P_)
 
+                % set the inactive neurons to nan
                 obj.P_{nn}(thSpikeRate,:) = nan;
+
+                % get the indices of the inactive neurons
                 nanidx = nanidx | any(isnan(obj.P_{nn}),2);
             end
 
             % remove nans
             for nn = 1:obj.nTrial
                 obj.P_{nn}(nanidx,:) = 0;
+
+                % get the number of spikes to add to the inactive neurons
                 l = size(obj.P_{nn},2);
                 n = ceil(max(obj.TrialTime) * 2 * obj.FRateLim);
+
+                % add random spikes to the inactive neurons
                 randomSpk = arrayfun(@(x)sparse(1,randperm(l,n),1,1,l),1:sum(nanidx),'UniformOutput',false);
                 randomSpk = cat(1,randomSpk{:});
                 obj.P_{nn}(nanidx,:) = randomSpk;
@@ -343,7 +421,20 @@ classdef NeuralEmbedding < handle & ...
         end
 
         function binData(obj)
-            
+            %% BINDATA Bin the data using a block diagonal matrix multiplication.
+            %
+            % This function multiplies the data with a sparse matrix that
+            % represents the binning operation. The matrix is a block diagonal
+            % matrix where each block is a matrix of ones with size equal to
+            % the bin width. The result is a new set of data with the same
+            % number of trials but with the number of time points reduced by
+            % the bin width. The subsampling property is then updated to
+            % reflect the new bin width.
+            %
+            % The tMaskSub property is also updated to reflect the new
+            % subsampling. This property contains the indices of the time
+            % points that are not masked (i.e. not NaN).
+
             T = length(obj.TrialTime);
 
             % Binning as block diagonal matrix multiplication
@@ -359,7 +450,11 @@ classdef NeuralEmbedding < handle & ...
         end
 
         function smoothData(obj)
-        % Performs Gaussian kernel smoothing of data on binned data
+            %% SMOOTHEDDATA Smooth the preprocessed data using a Gaussian kernel.
+            %
+            % The data is expected to be binned. If the useGpu property is true, the
+            % smoothing is performed using a GPU. The smoothed data is stored in the
+            % S_ property.
 
             obj.S_ = cellfun(@(x)NeuralEmbedding.smoother(x,...
                 obj.prekern,obj.causalSmoothing,obj.subsampling,obj.useGpu),...
@@ -367,36 +462,88 @@ classdef NeuralEmbedding < handle & ...
 
         end
 
+        
         function zscoreData(obj)
+            %% ZSCOREDATA Zscore the data using the mean and std calculated from all the trials.
+            %
+            % The mean and std are calculated from all the trials and stored in the
+            % mu and ss properties. The data is then zscored using the following formula:
+            % data = (data - mu) ./ ss;
+            %
+            % The zscored data is stored in the S_ property.
 
+            % Calculate mean and std from all the data
             obj.mu = mean([obj.S_{:}],2);
             obj.ss = std([obj.S_{:}],[],2);
 
         end
     
         function pars = assignEPars(obj,names,method)
+            %% ASSIGNEPARS Assign default parameters to the embedding method.
+            %
+            % obj.assignEPars(names,method) assigns the default parameters to the
+            % embedding method. The names of the parameters are expected to be in the
+            % names input. The method is expected to be in the method input. The
+            % resulting parameters are stored in the pars output.
+            %
+            % The parameters are assigned as follows:
+            %   1. The parameters are loaded from the method using the loadParams
+            %      method.
+            %   2. The default parameters are assigned from the properties of the
+            %      NeuralEmbedding object.
+            %   3. The resulting parameters are merged using the mergestructs
+            %      method.
+            % Load method parameters
+            methodPars = embedding.(method).loadParams();
+
+            % Load default parameters from properties
             names = string(names);
             genericPars = struct();
             for nn = names(:)'
                 genericPars.(nn) = obj.(nn);
             end
-            methodPars = embedding.(method).loadParams();
 
+            % Merge parameters
             pars = NeuralEmbedding.mergestructs(methodPars,genericPars);
         end
         function pars = assignMPars(obj,names,method)
+           %% ASSIGNMPARS Assign default parameters to the metric method.
+            %
+            % obj.assignMPars(names,method) assigns the default parameters to the
+            % metric method. The names of the parameters are expected to be in the
+            % names input. The method is expected to be in the method input. The
+            % resulting parameters are stored in the pars output.
+            %
+            % The parameters are assigned as follows:
+            %   1. The parameters are loaded from the method using the loadParams
+            %      method.
+            %   2. The default parameters are assigned from the properties of the
+            %      NeuralEmbedding object.
+            %   3. The resulting parameters are merged using the mergestructs
+            %      method.
+            
+            % Load method parameters
+            methodPars = metrics.pars.(method);
+
+            % Load default parameters from properties
             names = string(names);
             genericPars = struct();
             for nn = names(:)'
                 if nn == "",continue;end
                 genericPars.(nn) = obj.(nn);
             end
-            methodPars = metrics.pars.(method);
 
+            % Merge parameters
             pars = NeuralEmbedding.mergestructs(methodPars,genericPars);
         end
+ 
         function str = initMstruct(obj,data,type)
-            str = struct('type',type,...
+           %% INITMSTRUCT Initialize a metrics structure.
+            %
+            % obj.initMstruct(data,type) initializes a metrics structure with the
+            % data and type inputs. The resulting structure is stored in the str
+            % output.
+                str = struct('type',type,...
                 'date',datetime ,...
                 'condition',obj.cMask_,...
                 'data',data,...
@@ -484,29 +631,59 @@ classdef NeuralEmbedding < handle & ...
             Xs = conv2(full(X), flt, "same") ./ nm;
         end
         
-        % Merges structures. If fields are present in both, only Y is kept
-        function Z = mergestructs(x,y)
-                       Xnames = fieldnames(x);
+        function Z = mergestructs(x, y)
+        % MERGESTRUCTS    Merges two structures.
+        %
+        %   Merges two structures X and Y. If a field is present in both
+        %   structures, the value from Y is kept.
+        %
+        %   Z = MERGESTRUCTS(X, Y) returns a new structure Z that is a
+        %   combination of X and Y. If X and Y have fields with the same
+        %   name, the value from Y is used in Z.
+            % Get the field names of the two structures
+            Xnames = fieldnames(x);
             Ynames = fieldnames(y);
-            XinY = ismember(Xnames,Ynames);                         % field of A present also in B
-            
+
+            % Find the fields of X that are also present in Y
+            XinY = ismember(Xnames, Ynames);
+
+            % Convert the structures to cell arrays
             Xvals = struct2cell(x);
             Yvals = struct2cell(y);
 
+            % Create a new structure Z by merging the cell arrays
             Z = cell2struct(...
-                [Xvals(~XinY) ;Yvals ],...
-                [Xnames(~XinY);Ynames]);
+                [Xvals(~XinY); Yvals], ...
+                [Xnames(~XinY); Ynames]);
         end
         
         % Returns a matrix of explained variances
         function R2 = explainedVar(varargin)
-            %EXPLAINEDVAR returns a matrix of explained variances of dimension NxN
-            %where N is the number of inputs. Inputs must have the same size.
+            % EXPLAINEDVAR returns a matrix of explained variances of dimension NxN
+            % where N is the number of inputs. Inputs must have the same size.
+            %
+            % R2 = EXPLAINEDVAR(X, Y, Z, ...)
+            %
+            % Inputs:
+            %   X, Y, Z, ... - matrices of same size
+            %
+            % Outputs:
+            %   R2 - a matrix of explained variances of size NxN
+            %
+            % The R2 matrix is symmetric and R2(i,j) is the explained variance of
+            % the data in X_i with respect to X_j. If R2(i,j) > 1, it is set to 1
+            % and R2(j,i) is the actual explained variance of X_j with respect to
+            % X_i.
+
             sz1 = size(varargin{1});
+
+            % Check if first dimension is the number of samples
             if sz1(1) < sz1(2)
                 varargin{1} = varargin{1}';
                 sz1 = fliplr(sz1);
             end %fi
+
+            % Check if all inputs have the same size
             for ii = 2:nargin
                 if ~all(diag(...
                         sz1 == size(varargin{ii})' | fliplr(sz1) == size(varargin{ii})' ...
@@ -516,7 +693,11 @@ classdef NeuralEmbedding < handle & ...
                     varargin{ii} = varargin{ii}';
                 end
             end %ii
+
+            % Initialize R2 matrix
             R2 = zeros(nargin);
+
+            % Compute explained variances
             for ii = 1:nargin-1
                 X = varargin{ii};
                 for jj = ii+1:nargin
@@ -532,17 +713,21 @@ classdef NeuralEmbedding < handle & ...
                     end%fi
                 end% jj
             end%ii
-        end %explainedVar
 
-        % Returns true if current context is two level below base
+        end %explainedVar
         function value = calledByBase()
-            % calledByBase Returns true if current context is two level
-            % below base. This means that if it is called within a function
-            % it will be true if that function was called by base.
+        % CALLEDBYBASE Returns true if current context is two level below base
+        %
+        % This function checks how far up the call stack base is. If
+        % base is two calls up, it means that the current function was
+        % called by base and it returns true. Otherwise, it returns false.
+        %
+        % See also: dbstack
             stack = dbstack('-completenames');
             value = numel(stack) < 3;
         end
 
     end
 end
+
 
