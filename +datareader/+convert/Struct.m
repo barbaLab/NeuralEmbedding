@@ -1,5 +1,3 @@
-% [Dout,TrialTime,nUnits,nTrial,Condition,Area] = Struct(Din,opts)
-%
 % Converts a data structure Din into the standard format for the
 % NeuralEmbedding class.
 %
@@ -21,9 +19,13 @@
 %   nTrial (int): Number of trials
 %   Condition (string): Condition labels ( 1 x nTrials )
 %   Area (string): Area labels ( 1 x nUnits )
-function [Dout,TrialTime,nUnits,nTrial,Condition,Area] = Struct(Din,opts)
-    % Get the default values of the options
+%   Dishomogeneous (logical): Whether the trial lengths are homogeneous or not
+function [Dout,TrialTime,nUnits,nTrial,Condition,Area,Dishomogeneous] = Struct(Din,opts)
+    %% Get the default values of the options
     optsDefault = structfun(@isempty,opts,'UniformOutput',false);
+
+    %% Validate the input data structure
+    Din = datareader.is.Struct(Din,opts,true);
 
     %% Get the number of trials
     nTrial = length(Din);
@@ -43,45 +45,32 @@ function [Dout,TrialTime,nUnits,nTrial,Condition,Area] = Struct(Din,opts)
         1:nTrial,'UniformOutput',true);
     TrialL = unique(TrialL);
 
+    %% Check if the trial lengths are homogeneous
+    Dishomogeneous = numel(TrialL) > 1;
+
     %% Get the time vector
     if optsDefault.time
-        tName = datareader.is.Struct(Din,"time");
-        TrialTime = arrayfun(@(idx) Din(idx).(tName),...
-            1:nTrial,'UniformOutput',false);
-        TrialTime = cat(1,TrialTime{:});
-        if any(...
-                diff(TrialTime),...
-                "all")
-            error('Mismatch detected in times throughout trials.');
-        elseif size(TrialTime,2) ~= TrialL
-            error('Mismatch detected between times trial samples.');
-        else
-            TrialTime = TrialTime(1,:);
-        end
-    else
+        TrialTime = {Din.time};
+    elseif Dishomogeneous
         TrialTime = opts.time;
+    else
+        TrialTime = repmat(opts.time(1),nTrial,1);
     end
+    % ensure proper orientation
+    TrialTime = cellfun(@(t)t(:),TrialTime(:),'UniformOutput',false);
 
     %% Get the condition labels
     if optsDefault.condition
-        cName = datareader.is.Struct(Din,"condition");
-        Condition = arrayfun(@(idx) string(Din(idx).(cName)),...
-            1:nTrial,'UniformOutput',true);
+        Condition = cat(1,Din.condition);
     else
-        Condition = opts.condition;
+        Condition = opts.condition(:);
     end
 
     %% Get the area labels
     if optsDefault.area
-        aName = datareader.is.Struct(Din,"area");
-        Area = arrayfun(@(idx) string(Din(idx).(aName)(:)),...
-            1:nTrial,'UniformOutput',false);
-        Area = unique(cat(2,Area{:})','rows');
-        if size(Area,1)~=1
-            error('Mismatch detected in Area labels throughout trials.');
-        end
+        Area = Din(1).area(:);
     else
-        Area = opts.area;
+        Area = opts.area(:);
     end
 end
 
