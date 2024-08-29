@@ -88,6 +88,7 @@ classdef NeuralEmbedding < handle & ...
         mu  double = 0                                                     % per unit mean 
         ss  double = 1                                                     % per unit variance 
         subsampling double = 1                                             % subsampling, it is updated after binning
+        homogeneous logical = false                                    % flag for trial homogenuity. If all trials all equally long, this is 0
     end
     
     %% Constructor
@@ -122,10 +123,16 @@ classdef NeuralEmbedding < handle & ...
                 % If D is a numeric array convert it to the standard format
                 [D,TrialTime,nUnits,nTrial,Condition,Area,Dishomogeneous] = ...
                     datareader.convert.Double(D,opts);
+            elseif datareader.is.Cell(D,opts)
+                % If D is a cell array convert it to the standard format
+                [D,TrialTime,nUnits,nTrial,Condition,Area,Dishomogeneous] = ...
+                    datareader.convert.Cell(D,opts);
             end
             
             % Store the raw data
             obj.D_ = D;
+
+            obj.homogeneous = ~Dishomogeneous;
             % Store the number of areas
             obj.nArea = numel(unique(Area));
             % Pre-allocate the embedded data
@@ -139,6 +146,10 @@ classdef NeuralEmbedding < handle & ...
             obj.Conditions = Condition;
             % Store the area labels
             obj.Area = Area;
+            
+            % Store the original time mask
+            obj.tMask = cellfun(@(t) true(length(t),1),obj.TrialTime_,...
+                'UniformOutput',false);
             
             % Remove inactive neurons
             obj.removeInactiveNeurons();
@@ -286,6 +297,29 @@ classdef NeuralEmbedding < handle & ...
                 % logical arrays, throw an error
                 error('Input is either not logical or has a length mismatch.')
             end
+
+            % Update the subsampled time mask
+            if obj.subsampling ~=1
+                T     = cellfun(@length,obj.TrialTime_);
+                Tdown = floor(T./obj.subsampling);
+                Trest = T - Tdown*obj.subsampling;
+
+                % Binning as block diagonal matrix multiplication
+                blk = arrayfun(@(t,tr)...
+                    repmat({sparse(1:obj.subsampling,1,1)},t,1),...
+                    Tdown,'UniformOutput',false);
+
+                A = arrayfun(@(thisblk,tr,t)[blkdiag(thisblk{1}{:});sparse(tr,t)],...
+                    blk,Trest,Tdown,...
+                    'UniformOutput',false);
+
+                tMaskSub_ = cellfun(@(tm,a)logical(round(tm' * a./obj.subsampling)),...
+                    obj.tMask_,A,...
+                    'UniformOutput',false);
+            else
+                tMaskSub_ = obj.tMask_;
+            end
+            obj.tMaskSub = tMaskSub_(:);
         end
 
         % Returns up to date aMask .
@@ -404,8 +438,7 @@ classdef NeuralEmbedding < handle & ...
 
         end
     
-        function removeInactiveNeurons(obj)
-        %% removeInactiveNeurons - removes inactive neurons from the data
+        %% REMOVEINACTIVENEURONS Remove inactive neurons from the data
         % and replaces them with random spikes
         %
         % This function removes neurons with spike rates below a threshold
@@ -416,40 +449,44 @@ classdef NeuralEmbedding < handle & ...
         %
         % Returns:
         %   nothing
-        
-            % copy the data into the preprocessed data structure
+        function removeInactiveNeurons(obj)
+            % Copy the data into the preprocessed data structure
             obj.P_ = obj.D_;
 
-            % find the time difference between the last and first trial
-            TT = abs(obj.TrialTime(end) - obj.TrialTime(1));
+            % Find the time difference between the last and first trial
+            TT = cellfun(@(t)t(end)-t(1),obj.TrialTime,'UniformOutput',false);
 
-            % find the neurons with spike rates below the threshold
-            thSpikeRate = cellfun(@(d) (sum(d,2) ./ TT) < obj.FRateLim,...
-                obj.D_,...
+            % Find the neurons with spike rates below the threshold
+            thSpikeRate = cellfun(@(d,t) (sum(d,2) ./ t) < obj.FRateLim,...
+                obj.D_,TT(:),...
                 'UniformOutput',false);
             thSpikeRate = sum([thSpikeRate{:}],2) > (obj.nTrial * obj.acceptanceRatio);
 
-            % get the indices of the inactive neurons
+            % Get the indices of the inactive neurons
             nanidx = false(size(obj.P_{1},1),1);
             for nn = 1:numel(obj.P_)
 
-                % set the inactive neurons to nan
+                % Set the inactive neurons to nan
                 obj.P_{nn}(thSpikeRate,:) = nan;
 
-                % get the indices of the inactive neurons
+                % Get the indices of the inactive neurons
                 nanidx = nanidx | any(isnan(obj.P_{nn}),2);
             end
 
-            % remove nans
+            % Calculate the number of spikes to add to each inactive neuron
+            n = cellfun(@(tt)ceil(tt(end) - tt(1) ...
+                    * 2 * obj.FRateLim),...
+                    obj.TrialTime);
+
+            % Replace inactive neurons with random spikes
             for nn = 1:obj.nTrial
                 obj.P_{nn}(nanidx,:) = 0;
 
-                % get the number of spikes to add to the inactive neurons
+                % Add random spikes to the inactive neurons
                 l = size(obj.P_{nn},2);
-                n = ceil(max(obj.TrialTime) * 2 * obj.FRateLim);
 
-                % add random spikes to the inactive neurons
-                randomSpk = arrayfun(@(x)sparse(1,randperm(l,n),1,1,l),1:sum(nanidx),'UniformOutput',false);
+                randomSpk = arrayfun(@(x)sparse(1,randperm(l,n(nn)),1,1,l),...
+                    1:sum(nanidx),'UniformOutput',false);
                 randomSpk = cat(1,randomSpk{:});
                 obj.P_{nn}(nanidx,:) = randomSpk;
 
@@ -471,18 +508,27 @@ classdef NeuralEmbedding < handle & ...
             % subsampling. This property contains the indices of the time
             % points that are not masked (i.e. not NaN).
 
-            T = length(obj.TrialTime);
+            T     = cellfun(@length,obj.TrialTime);
+            Tdown = floor(T./obj.binWidth);
+            Trest = T - Tdown*obj.binWidth;
 
             % Binning as block diagonal matrix multiplication
-            blk = repmat({ones(obj.binWidth,1)},...
-                T/obj.binWidth,1);
-            A = blkdiag(blk{:});
+            blk = arrayfun(@(t,tr)...
+                [repmat({ones(obj.binWidth,1)},t,1);zeros(tr,1)],...
+                Tdown,Trest,'UniformOutput',false);
 
-            obj.P_ = cellfun(@(x) x * sparse(A),obj.P_,...
+            A = cellfun(@(thisblk)blkdiag(thisblk{:}),blk,...
+                'UniformOutput',false);
+
+            obj.P_ = cellfun(@(x,a) x * sparse(a),...
+                obj.P_,A(:),...
                 'UniformOutput',false);
             obj.subsampling = obj.binWidth;
 
-            obj.tMaskSub = logical(round(obj.tMask_ * A./obj.subsampling));
+            tMaskSub_ = cellfun(@(tm,a)logical(round(tm' * a./obj.subsampling)),...
+                obj.tMask_,A,...
+                'UniformOutput',false);
+             obj.tMaskSub = tMaskSub_(:);
         end
 
         function smoothData(obj)
@@ -497,7 +543,6 @@ classdef NeuralEmbedding < handle & ...
                 obj.P_,'UniformOutput',false);
 
         end
-
         
         function zscoreData(obj)
             %% ZSCOREDATA Zscore the data using the mean and std calculated from all the trials.
