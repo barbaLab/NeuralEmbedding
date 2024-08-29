@@ -16,7 +16,7 @@ classdef NeuralEmbedding < handle & ...
     end
 
     properties(Dependent,Access=public)
-        tMask       logical                                                 % Time vector mask, ie what time bins to use to embed data
+        tMask       cell                                                 % Time vector mask, ie what time bins to use to embed data
         aMask       string                                                  % Area vector mask, ie what area to use during computation
         cMask       string                                                  % Condition vector mask, ie whar condition to use during computation
         
@@ -72,8 +72,8 @@ classdef NeuralEmbedding < handle & ...
     properties (Access = private)
         D_ cell                                                             % Raw data
         TrialTime_                                                          % original trial time
-        tMask_      logical                                                 % original size mask
-        tMaskSub    logical                                                 % stored subsampled mask for speed 
+        tMask_      cell                                                    % original size mask
+        tMaskSub    cell                                                    % stored subsampled mask for speed 
 
         aMask_      string = "AllNeurons"                                   % stored area mask
         cMask_      string = "AllConditions"                                % stored condition mask
@@ -105,7 +105,7 @@ classdef NeuralEmbedding < handle & ...
         %       condition : (1,:) condition labels for each trial
             arguments
                 D
-                opts.time           (1,:) {mustBeNumeric} = []
+                opts.time           (1,:) {mustBeVector} = []
                 opts.fs             (1,:) {mustBeNumeric} = 1e3
                 opts.area           (1,:) {mustBeText}    = string.empty
                 opts.condition      (1,:) {mustBeText}    = string.empty
@@ -116,11 +116,11 @@ classdef NeuralEmbedding < handle & ...
             % Determine the type of data
             if datareader.is.Struct(D,opts)
                 % If D is a struct convert it to the standard format
-                [D,TrialTime,nUnits,nTrial,Condition,Area] = ...
+                [D,TrialTime,nUnits,nTrial,Condition,Area,Dishomogeneous] = ...
                     datareader.convert.Struct(D,opts);
             elseif datareader.is.Double(D,opts)
                 % If D is a numeric array convert it to the standard format
-                [D,TrialTime,nUnits,nTrial,Condition,Area] = ...
+                [D,TrialTime,nUnits,nTrial,Condition,Area,Dishomogeneous] = ...
                     datareader.convert.Double(D,opts);
             end
             
@@ -131,10 +131,7 @@ classdef NeuralEmbedding < handle & ...
             % Pre-allocate the embedded data
             obj.E_  = cell(nTrial,1 + obj.nArea);
             % Store the original trial time
-            obj.TrialTime_ = TrialTime;
-            % Store the original time mask
-            obj.tMask_ = true(size(obj.TrialTime_));
-            
+            obj.TrialTime_ = TrialTime(:);            
             % Store the number of units and trials
             obj.nUnits = nUnits;
             obj.nTrial = nTrial;
@@ -151,7 +148,6 @@ classdef NeuralEmbedding < handle & ...
             obj.smoothData();
             % Z-score the data
             obj.zscoreData();
-
         end
     end
 
@@ -220,34 +216,74 @@ classdef NeuralEmbedding < handle & ...
         % Returns updated TrialTime wrt subsampling and tMask.
         function value = get.TrialTime(obj)
             % idx = find(obj.tMask);
-            value = obj.TrialTime_(1:obj.subsampling:end);
-            value = value(obj.tMask);
+            value = cellfun(@(t)t(1:obj.subsampling:end),...
+                obj.TrialTime_,...
+                'UniformOutput',false);
+            value = cellfun(@(t,tm)t(tm),...
+                value(:),obj.tMask,...
+                'UniformOutput',false);
+
         end
 
         % Returns up to date TrialL wrt subsampling.
         function value = get.TrialL(obj)
-            value = floor(sum(obj.tMask_) ./ obj.subsampling);
+            value = cellfun(@(tmsub)floor(sum(tmsub)),...
+               obj.tMaskSub,'UniformOutput',false);
         end
 
         % Returns up to date tMask wrt subsampling.
         function value = get.tMask(obj)
             if obj.useTMask
-                value = true(1,obj.TrialL);
+                value = obj.tMaskSub(:);
             else
-                value = obj.tMaskSub;
+                value = cellfun(@(tms)tms | 1,...
+                    obj.tMaskSub,...
+                    'UniformOutput',false);
             end
         end
+        %SET.TMASK Set the time mask of the data
+        %   set.tMask(val) sets the time mask of the data to val.
+        %   val should be either a logical array or a cell array of logical
+        %   arrays. If val is a logical array, it should have the same length
+        %   as the number of time points in the data. If val is a cell array of
+        %   logical arrays, it should have the same length as the number of
+        %   trials in the data.
         function set.tMask(obj,val)
+            % Check if the input is a logical array or a cell array of logical
+            % arrays
             if islogical(val) && ...
-                    length(val) == length(obj.TrialTime_)
-                obj.tMask_ = val;
+                    obj.homogeneous && ...
+                      length(val) == length(obj.TrialTime_{1})
+                % If the input is a logical array, replicate it to match the
+                % number of trials
+                obj.tMask_ = repmat({val},obj.nTrial,1);
 
-                T = length(obj.TrialTime_);
-                blk = repmat({ones(obj.subsampling,1)},...
-                    T/obj.subsampling,1);
-                A = blkdiag(blk{:});
-                obj.tMaskSub = logical(round(obj.tMask_ * A./obj.subsampling));
+            elseif iscell(val) && ...
+                    obj.homogeneous && ...
+                      length(val{1}) == length(obj.TrialTime_{1})
+                % If the input is a cell array of logical arrays, replicate the
+                % first element to match the number of trials
+                obj.tMask_ = repmat(val(1),obj.nTrial,1);
+
+            elseif iscell(val) && ...
+                    ~obj.homogeneous && ...
+                      length(val) == obj.nTrial && ...
+                        all(cellfun(@(v,t)length(v) == length(t), val, obj.TrialTime_))
+                % If the input is a cell array of logical arrays, check if the
+                % length of each element matches the number of time points in
+                % the data
+                if all(cellfun(@(m,t)length(m)==length(t),...
+                        val,obj.TrialTime_))
+                    % If the length matches, set the time mask to the input
+                    obj.tMask_ = val(:);
+                else
+                    % If the length does not match, throw an error
+                    error('Input is either not logical or has a length mismatch.')
+                end
+
             else
+                % If the input is neither a logical array nor a cell array of
+                % logical arrays, throw an error
                 error('Input is either not logical or has a length mismatch.')
             end
         end
