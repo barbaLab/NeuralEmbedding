@@ -146,13 +146,18 @@ classdef NeuralEmbedding < handle & ...
             obj.Conditions = Condition;
             % Store the area labels
             obj.Area = Area;
-            
+
             % Store the original time mask
             obj.tMask = cellfun(@(t) true(length(t),1),obj.TrialTime_,...
                 'UniformOutput',false);
             
             % Remove inactive neurons
             obj.removeInactiveNeurons();
+            
+            performPrePro(obj);
+        end
+
+        function performPrePro(obj)
             % Bin the data
             obj.binData();
             % Smooth the data
@@ -187,17 +192,17 @@ classdef NeuralEmbedding < handle & ...
             amask = obj.aMask;
             cmask = obj.cMask;
 
-            value = cell(obj.nTrial,size(amask,1));
-            for amIdx = 1:size(amask,1)
+            value = cell(obj.nTrial,size(amask,2));
+            for amIdx = 1:size(amask,2)
                 if obj.zscore
-                    value(:,amIdx) = cellfun(@(x)(x(amask(amIdx,:),obj.tMask)...
-                        - obj.mu(amask(amIdx,:)))...
-                        ./obj.ss(amask(amIdx,:)),...
-                        obj.S_(cmask),...
+                    value(:,amIdx) = cellfun(@(x,tmask)(x(amask(:,amIdx),tmask)...
+                        - obj.mu(amask(:,amIdx)))...
+                        ./obj.ss(amask(:,amIdx)),...
+                        obj.S_(cmask),obj.tMask(cmask),...
                         'UniformOutput',false);
                 else
-                    value(amIdx) = cellfun(@(x)x(amask,obj.tMask),...
-                        obj.S_(cmask),...
+                    value(amIdx) = cellfun(@(x,tmask)x(amask(:,amIdx),tmask),...
+                        obj.S_(cmask),obj.tMask(cmask),...
                         'UniformOutput',false);
                 end
             end
@@ -216,12 +221,12 @@ classdef NeuralEmbedding < handle & ...
         
         % Returns unique experimental conditions.
         function value = get.UConditions(obj)
-            value = [string(unique(obj.Conditions)), "AllConditions"];
+            value = [string(unique(obj.Conditions(:))); "AllConditions"];
         end
 
         % Returns unique experimental conditions.
         function value = get.UArea(obj)
-            value = [string(unique(obj.Area)), "AllNeurons"];
+            value = [string(unique(obj.Area(:))); "AllNeurons"];
         end
        
         % Returns updated TrialTime wrt subsampling and tMask.
@@ -323,25 +328,45 @@ classdef NeuralEmbedding < handle & ...
         end
 
         % Returns up to date aMask .
+        %
+        %   val = obj.get.aMask() returns the area mask.
+        %
+        %   The area mask is a logical array that marks the neurons that
+        %   satisfy the area mask. If the area mask is not specified, all
+        %   neurons are marked as true.
         function value = get.aMask(obj)
             if obj.useaMask
+                % Get the area mask as a string
                 str = obj.aMask_;
+                % Check if the area mask string matches one of the areas
+                % provided during initialization
                 value = obj.Area == str';
+                % If the area mask is "AllNeurons", mark all neurons as true
                 if strcmp(str,"AllNeurons")
                     value = value | 1;
                 end
             else
+                % If the area mask is not specified, mark all neurons as true
                 str = "AllNeurons";
                 value = true(1,obj.nUnits);
             end
             if obj.calledByBase,fprintf(1,'aMask (i.e. area mask) set to %s.\n',str);end
         end
+        % Sets the area mask to the value specified by the input string.
+        %
+        %   The input string should match one of the areas provided during
+        %   initialization. If the input string is empty, or matches "none" or
+        %   "all", all neurons are marked as true.
         function set.aMask(obj,val)
             if isstring(val) &&...
                     any(ismember(obj.UArea,val))
+                % If the input string matches one of the areas, set the area
+                % mask to that area
                 obj.aMask_ = val;
             elseif isstring(val) &&...
-                    val == "" || strcmpi(val,"none") || strcmpi(val,"all")
+                    (val == "" || strcmpi(val,"none") || strcmpi(val,"all"))
+                % If the input string is empty or matches "none" or "all",
+                % set the area mask to all neurons
                 obj.aMask_ = "AllNeurons";
             else
                 error('Input is either not strinf or does not match areas provided during initialization.')
@@ -543,7 +568,7 @@ classdef NeuralEmbedding < handle & ...
                 obj.P_,'UniformOutput',false);
 
         end
-        
+
         function zscoreData(obj)
             %% ZSCOREDATA Zscore the data using the mean and std calculated from all the trials.
             %
@@ -644,7 +669,15 @@ classdef NeuralEmbedding < handle & ...
 
     %% Plot data
     methods
-
+        function plot3(obj)
+            reducedE = cellfun(@(x)[x nan(3,1)], ...
+                obj.E, ...
+                'UniformOutput',false);
+            nT = sum(obj.cMask);
+            MaxLines = min(nT,80);
+            reducedE = [reducedE{randperm(nT,MaxLines)}];
+            plot3(reducedE(1,:),reducedE(2,:),reducedE(3,:))
+        end
     end
 
     %% Class data preview
