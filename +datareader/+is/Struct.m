@@ -39,7 +39,8 @@ function Dout = Struct(Din,opts,returnDinLabel)
             end
             return;
         else
-            error("Unrecognized call with only one non-string, non-struct argument");
+            Dout = false;
+            return;
         end
     end
 
