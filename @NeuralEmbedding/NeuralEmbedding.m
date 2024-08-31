@@ -151,13 +151,16 @@ classdef NeuralEmbedding < handle & ...
             obj.tMask = cellfun(@(t) true(length(t),1),obj.TrialTime_,...
                 'UniformOutput',false);
             
-            % Remove inactive neurons
-            obj.removeInactiveNeurons();
-            
             performPrePro(obj);
         end
 
         function performPrePro(obj)
+            obj.subsampling = 1;
+            obj.tMask = obj.tMask_;
+
+            % Remove inactive neurons
+            obj.removeInactiveNeurons();
+
             % Bin the data
             obj.binData();
             % Smooth the data
@@ -374,18 +377,16 @@ classdef NeuralEmbedding < handle & ...
         %   initialization. If the input string is empty, or matches "none" or
         %   "all", all neurons are marked as true.
         function set.aMask(obj,val)
-            if isstring(val) &&...
-                    any(ismember(obj.UArea,val))
-                % If the input string matches one of the areas, set the area
-                % mask to that area
-                obj.aMask_ = val;
-            elseif isstring(val) &&...
-                    (val == "" || strcmpi(val,"none") || strcmpi(val,"all"))
-                % If the input string is empty or matches "none" or "all",
-                % set the area mask to all neurons
-                obj.aMask_ = "AllNeurons";
+
+            if isstring(val)
+                    uAIdx = ismember(obj.UArea(1:end-1),val);
+                    obj.aMask_ = obj.UArea(uAIdx);
+
+                    if any(val == "" | strcmpi(val,"none") | strcmpi(val,"all"))
+                        obj.aMask_ = [ obj.aMask_;"AllNeurons"];
+                    end
             else
-                error('Input is either not strinf or does not match areas provided during initialization.')
+                error('Input must be string')
             end
         end
 
