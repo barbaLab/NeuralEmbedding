@@ -21,6 +21,7 @@ switch deblank(type)
                 embedding.PCA(obj.S,pars);
         catch er
             flag = false;
+            rethrow(er);
             return;
         end
 
@@ -34,6 +35,7 @@ switch deblank(type)
                 embedding.GPFA(obj.P, pars);                                             
         catch er
             flag = false;
+            rethrow(er);
             return;
         end
     case {'CCA','cca'}
@@ -53,6 +55,7 @@ switch deblank(type)
                 embedding.CCA(D,pars);
         catch er
             flag = false;
+            rethrow(er);
             return;
         end
     case {'umap','UMAP'}
