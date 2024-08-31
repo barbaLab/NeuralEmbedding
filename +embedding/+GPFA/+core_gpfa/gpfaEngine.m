@@ -1,6 +1,6 @@
-function [E,C,VarExp] = reduce(seqTrain, seqTest, varargin)
+function gpfaEngine(seqTrain, seqTest, fname, varargin)
 %  
-% originally gpfaEngine(seqTrain, seqTest, fname, ...) 
+% gpfaEngine(seqTrain, seqTest, fname, ...) 
 %
 % Extract neural trajectories using GPFA.
 %
@@ -28,13 +28,13 @@ function [E,C,VarExp] = reduce(seqTrain, seqTest, varargin)
   binWidth      = 20; % in msec
   startTau      = 100; % in msec
   startEps      = 1e-3;
-  extraOpts     = embedding.GPFA.util.assignopts(who, varargin);
+  extraOpts     = assignopts(who, varargin);
     
   % For compute efficiency, train on equal-length segments of trials
-  seqTrainCut = embedding.GPFA.util.cutTrials(seqTrain, extraOpts{:});
+  seqTrainCut = cutTrials(seqTrain, extraOpts{:});
   if isempty(seqTrainCut)
     fprintf('WARNING: no segments extracted for training.  Defaulting to segLength=Inf.\n');
-    seqTrainCut = embedding.GPFA.util.cutTrials(seqTrain, 'segLength', Inf);
+    seqTrainCut = cutTrials(seqTrain, 'segLength', Inf);
   end
   
   % ==================================
@@ -53,7 +53,7 @@ function [E,C,VarExp] = reduce(seqTrain, seqTest, varargin)
   fprintf('Initializing parameters using factor analysis...\n');
   
   yAll             = [seqTrainCut.y];
-  [faParams, faLL] = embedding.GPFA.core_twostage.fastfa(yAll, xDim, extraOpts{:});
+  [faParams, faLL] = fastfa(yAll, xDim, extraOpts{:});
   
   startParams.d = mean(yAll, 2);
   startParams.C = faParams.L;
@@ -72,33 +72,26 @@ function [E,C,VarExp] = reduce(seqTrain, seqTest, varargin)
   fprintf('\nFitting GPFA model...\n');
   
   [estParams, seqTrainCut, LL, iterTime] =... 
-    embedding.GPFA.core_gpfa.em(currentParams, seqTrainCut, extraOpts{:});
+    em(currentParams, seqTrainCut, extraOpts{:});
     
   % Extract neural trajectories for original, unsegmented trials
   % using learned parameters
-  [seqTrain, LLorig] = embedding.GPFA.core_gpfa.exactInferenceWithLL(seqTrain, estParams);
+  [seqTrain, LLorig] = exactInferenceWithLL(seqTrain, estParams);
 
   % ========================================
   % Leave-neuron-out prediction on test data
   % ========================================
   if ~isempty(seqTest) % check if there are any test trials
     if estParams.notes.RforceDiagonal
-      seqTest = embedding.GPFA.core_gpfa.cosmoother_gpfa_viaOrth_fast(seqTest, estParams, 1:xDim);
+      seqTest = cosmoother_gpfa_viaOrth_fast(seqTest, estParams, 1:xDim);
     else
-      seqTest = embedding.GPFA.core_gpfa.cosmoother_gpfa_viaOrth(seqTest, estParams, 1:xDim);
+      seqTest = cosmoother_gpfa_viaOrth(seqTest, estParams, 1:xDim);
     end
   end
-
+  
   % =============
-  % return results
+  % Save results
   % =============
-  AllSeq = seqTrain;
-  E = cell(size(AllSeq));
-  C = cell(1);
-  VarExp = cell(1);
-
-  [E{:}] = deal(AllSeq.xsm);
-  [~, C{1}] = embedding.GPFA.util.orthogonalize([AllSeq.xsm], estParams.C);
-  [~,lat] = pcacov(estParams.C * estParams.C');
-  VarExp{1} = cumsum(lat(1:xDim))./sum(lat);
-end
+  vars  = who;
+  fprintf('Saving %s...\n', fname);
+  save(fname, vars{~ismember(vars, {'yAll'})});
