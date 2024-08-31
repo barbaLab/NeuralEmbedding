@@ -92,7 +92,8 @@ end
 
 % smooth data
 amask = ismember(obj.UArea,obj.aMask_);
-obj.E_(:,amask) = cellfun(@(x)NeuralEmbedding.smoother(x,...
+cmask = obj.cMask;
+obj.E_(cmask,amask) = cellfun(@(x)NeuralEmbedding.smoother(x,...
             obj.prekern,obj.causalSmoothing,obj.subsampling,obj.useGpu),...
             E,'UniformOutput',false);
 
