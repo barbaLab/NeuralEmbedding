@@ -41,7 +41,7 @@ NE.computeMetrics("arc");
 
 ## Documentation
 
-For detailed documentation and examples, please refer to the [Wiki](https://github.com/yourusername/NeuralEmbedding/wiki).
+For detailed documentation and examples, please refer to the [Wiki](https://github.com/barbaLab/NeuralEmbedding/wiki).
 
 ## Contributing
 
