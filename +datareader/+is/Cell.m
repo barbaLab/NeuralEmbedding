@@ -30,15 +30,6 @@ function Dout = Cell(Din,opts)
         if Dout
             % Validate the options and the input data
             dishomogeneous = ValidateArgs(Din,opts);
-
-            if ~dishomogeneous
-                % Convert the cell array to a numeric array
-                Din_ = cat(3,Din{:});
-
-                opts.time = opts.time{1};
-                % Check if the numeric array is in the correct format
-                Dout = NeuralEmbedding.datareader.is.Double(Din_,opts);
-            end
         end
         
         return;

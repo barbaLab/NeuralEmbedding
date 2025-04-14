@@ -4,7 +4,7 @@ function [Dout,TrialTime,nUnits,nTrial,Condition,Area,Dishomogeneous] = Double(D
 % Convert a double array to the standard format for the NeuralEmbedding
 % class.
 %
-% Parameters:
+% Input:
 %   Din (double): Input data in the format nUnits x TrialL x nTrials
 %   opts (struct): Options structure with the following fields
 %       time (double): Time vector ( TrialL x 1 )

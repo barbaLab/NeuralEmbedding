@@ -16,13 +16,23 @@ function [Dout,TrialTime,nUnits,nTrial,Condition,Area,Dishomogeneous] = Cell(Din
     if length(unique(TrialL)) == 1
 
         Dishomogeneous = false;
-
-        % Convert the cell array to a numeric array
-        Din_ = cat(3,Din{:});
-        % Check if the numeric array is in the correct format
-        [Dout,TrialTime,nUnits,nTrial,Condition,Area] = ...
-            NeuralEmbedding.datareader.convert.Double(Din_,opts);
-        return;    
+        dataclass = cellfun(@(x)issparse(x),Din);
+        if not(all(dataclass))
+            tmp = cellfun(@sparse,Din(not(dataclass)),'UniformOutput',false);
+            Dout = Din;
+            Dout(not(dataclass)) = tmp;
+        else
+            Dout = Din;
+        end
+        TrialTime = opts.time;
+        if not(iscell(TrialTime))
+            TrialTime = repmat({TrialTime},nTrial,1);
+        else
+            TrialTime = repmat(TrialTime(1),nTrial,1);
+        end
+        Condition   = opts.condition;
+        Area        = opts.area;
+        return;
     end
 
     Dishomogeneous = true;

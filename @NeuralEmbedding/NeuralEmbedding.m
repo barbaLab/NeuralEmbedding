@@ -55,6 +55,9 @@ classdef NeuralEmbedding < handle & ...
 
         % Metrics computation
         appendM                 = false
+
+        % Metadata
+        Meta                    = struct("AnName","","ExpGroup","");
     end
 
     properties (GetAccess = public,SetAccess = private)
@@ -67,6 +70,7 @@ classdef NeuralEmbedding < handle & ...
         nUnits double
         nTrial double
         nArea  double
+        nCondition double
     end
 
     properties (Access = private)
@@ -111,6 +115,7 @@ classdef NeuralEmbedding < handle & ...
                 opts.area           (1,:) {mustBeText}    = string.empty
                 opts.condition      (1,:) {mustBeText}    = string.empty
                 
+                opts.pars           (1,:) struct = struct.empty
             end
 
 
@@ -135,6 +140,7 @@ classdef NeuralEmbedding < handle & ...
             obj.homogeneous = ~Dishomogeneous;
             % Store the number of areas
             obj.nArea = numel(unique(Area));
+            obj.nCondition = numel(unique(Condition));
             % Pre-allocate the embedded data
             obj.E_  = cell(nTrial,1 + obj.nArea);
             % Store the original trial time
@@ -151,10 +157,38 @@ classdef NeuralEmbedding < handle & ...
             obj.tMask = cellfun(@(t) true(length(t),1),obj.TrialTime_,...
                 'UniformOutput',false);
             
+            obj.setPars(opts.pars)
+
             performPrePro(obj);
         end
 
         function performPrePro(obj)
+            %PERFORMPREPRO Perform all preprocessing operations on the data
+            %   This function removes inactive neurons, bins the data, smooths the
+            %   data and z-scores the data. The parameters for these operations are
+            %   stored in the properties of the object.
+            % 
+            % Inactive neurons' pruning, <a href="matlab:help NeuralEmbedding.removeInactiveNeurons">removeInactiveNeurons()</a>
+            % Pars:
+            %   - FRateLim: the minimum spike rate for a neuron to be considered
+            %     active
+            %   - acceptanceRatio: the fraction of trials that must have a spike rate
+            %     above FRateLim for a neuron to be considered active
+            % 
+            % Data binning, <a href="matlab:help NeuralEmbedding.binData">binData()</a>
+            % Pars:
+            %   - binWidth: the width of the bins in samples
+            % 
+            % Data smoothing, <a href="matlab:help NeuralEmbedding.smoothData">smoothData()</a>
+            % Pars:
+            %   - causalSmoothing: whether to use causal or acausal smoothing
+            %   - prekern: the width of the smoothing kernel in samples
+            % 
+            % Data Z-scoring, <a href="matlab:help NeuralEmbedding.zscoreData">zscoreData()</a>
+            % Pars:
+            %   - zscore: whether to z-score the data or not
+
+            
             obj.subsampling = 1;
             obj.tMask = obj.tMask_;
 
@@ -163,8 +197,10 @@ classdef NeuralEmbedding < handle & ...
 
             % Bin the data
             obj.binData();
+
             % Smooth the data
             obj.smoothData();
+
             % Z-score the data
             obj.zscoreData();
         end
@@ -251,11 +287,11 @@ classdef NeuralEmbedding < handle & ...
         % Returns updated TrialTime wrt subsampling and tMask.
         function value = get.TrialTime(obj)
             % idx = find(obj.tMask);
-            value = cellfun(@(t)t(1:obj.subsampling:end),...
-                obj.TrialTime_,...
+                value = cellfun(@(t)t(1:obj.subsampling:end),...
+                obj.TrialTime_(obj.cMask),...
                 'UniformOutput',false);
             value = cellfun(@(t,tm)t(tm),...
-                value(:),obj.tMask,...
+                value(:),obj.tMask(obj.cMask),...
                 'UniformOutput',false);
 
         end
@@ -263,7 +299,7 @@ classdef NeuralEmbedding < handle & ...
         % Returns up to date TrialL wrt subsampling.
         function value = get.TrialL(obj)
             value = cellfun(@(tmsub)floor(sum(tmsub)),...
-               obj.tMaskSub,'UniformOutput',false);
+               obj.tMaskSub(obj.cMask),'UniformOutput',false);
         end
 
         % Returns up to date tMask wrt subsampling.
@@ -298,7 +334,7 @@ classdef NeuralEmbedding < handle & ...
                       length(val{1}) == length(obj.TrialTime_{1})
                 % If the input is a cell array of logical arrays, replicate the
                 % first element to match the number of trials
-                obj.tMask_ = repmat(val(1),obj.nTrial,1);
+                obj.tMask_ = repmat({val{1}(:)},obj.nTrial,1);
 
             elseif iscell(val) && ...
                     ~obj.homogeneous && ...
@@ -382,7 +418,7 @@ classdef NeuralEmbedding < handle & ...
                     uAIdx = ismember(obj.UArea(1:end-1),val);
                     obj.aMask_ = obj.UArea(uAIdx);
 
-                    if any(val == "" | strcmpi(val,"none") | strcmpi(val,"all"))
+                    if any(val == "" | strcmpi(val,"none") | strcmpi(val,"all") | strcmpi(val,"AllNeurons"))
                         obj.aMask_ = [ obj.aMask_;"AllNeurons"];
                     end
             else
@@ -401,7 +437,7 @@ classdef NeuralEmbedding < handle & ...
             %   all trials are marked as true.
             if obj.usecMask
                 str = obj.cMask_;
-                value = strcmp(obj.Conditions,str);
+                value = ismember(obj.Conditions,str);
                 if strcmp(str,"AllConditions")
                     value = value | 1;
                 end
@@ -425,7 +461,7 @@ classdef NeuralEmbedding < handle & ...
             %   - "" or "none" to set condition mask to all conditions
             %   - "all" to set condition mask to all conditions
             if isstring(val) &&...
-                    any(strcmp(obj.UConditions,val))
+                    any(ismember(obj.UConditions,val))
                 obj.cMask_ = val;
             elseif isstring(val) &&...
                     val == "" || strcmpi(val,"none") || strcmpi(val,"all")
@@ -437,61 +473,36 @@ classdef NeuralEmbedding < handle & ...
     end 
     %% Preprocessing methods
     methods (Access = private)
-        function loadDefaultPars(obj)
-            %LOADDEFUALTPARS load defualt parameters
-            %   This function loads default parameters for the neural
-            %   embedding algorithm. The parameters loaded here are
-            %   used if the user does not specify them during
-            %   initialization.
-           
-            % number of principal components to keep
-            pars_.numPC = 3;
-
-            % split units
-            pars_.splitUnits = [0 size(D(1).data,1)];
-            % time vector
-            obj.t = obj.TrialTime;
-
-            % sequence test
-            pars_.seqTest = false(1,numel(D));
-
-            % end leg range
-            pars_.endLeg_range = [1:250 size(D(1).data,2)-250:size(D(1).data,2)];
-            % interest range
-            pars_.interest_range = (-250:250)+0.5*size(D(1).data,2);
-            % cca reference signal
-            pars_.ccaRefSig = [];
-
-            % supervise by conditions
-            pars_.SuperviseByConditions = false;
-
-            % reference data
-            pars_.D_ref = {nan};
-
-            % number of reference data sets
-            N_Ref = length(pars_.D_ref);
-            % number of areas
-            N_Areas = length(pars_.splitUnits)-1;
-            % if there are more areas than reference data sets, make
-            % sure there are enough reference data sets
-            if N_Ref ~= N_Areas
-                [pars_.D_ref{N_Ref+1:N_Areas}] = deal(nan);
+        function setPars(obj,pars)
+            %SETPARS takes care of assigning custom parameters
+            
+            pNames = fieldnames(pars);
+            for pp = 1:numel(pNames)
+                pn = pNames{pp};
+                set(obj,pn,pars.(pn));
             end
-
         end
     
+        
+        function removeInactiveNeurons(obj)
         %% REMOVEINACTIVENEURONS Remove inactive neurons from the data
         % and replaces them with random spikes
         %
         % This function removes neurons with spike rates below a threshold
         % and replaces them with random spikes.
         %
-        % Parameters:
+        % Input:
         %   obj - the NeuralEmbedding object
         %
         % Returns:
         %   nothing
-        function removeInactiveNeurons(obj)
+        %
+        % Parameters:
+        %   The threshold is set by the FRateLim property.
+        %   The acceptanceRatio property sets the ratio of trials with
+        %   spike rates above the threshold that are accepted as active.
+        %
+
             % Copy the data into the preprocessed data structure
             obj.P_ = obj.D_;
 
@@ -536,19 +547,20 @@ classdef NeuralEmbedding < handle & ...
         end
 
         function binData(obj)
-            %% BINDATA Bin the data using a block diagonal matrix multiplication.
-            %
-            % This function multiplies the data with a sparse matrix that
-            % represents the binning operation. The matrix is a block diagonal
-            % matrix where each block is a matrix of ones with size equal to
-            % the bin width. The result is a new set of data with the same
-            % number of trials but with the number of time points reduced by
-            % the bin width. The subsampling property is then updated to
-            % reflect the new bin width.
-            %
-            % The tMaskSub property is also updated to reflect the new
-            % subsampling. This property contains the indices of the time
-            % points that are not masked (i.e. not NaN).
+        %% BINDATA Bin the data using a block diagonal matrix multiplication
+        % This function bins the data using a block diagonal matrix
+        % multiplication method, reducing the number of time points by the
+        % bin width.
+        %
+        % Input:
+        %   obj - the NeuralEmbedding object
+        %
+        % Returns:
+        %   nothing
+        %
+        % Parameters:
+        %   The bin width is set by the binWidth property. The resulting
+        %   subsampling property reflects the new bin width.
 
             T     = cellfun(@length,obj.TrialTime);
             Tdown = floor(T./obj.binWidth);
@@ -572,15 +584,25 @@ classdef NeuralEmbedding < handle & ...
             tMaskSub_ = cellfun(@(tm,a)logical(round(tm' * a./obj.subsampling)),...
                 obj.tMask_,A,...
                 'UniformOutput',false);
-             obj.tMaskSub = tMaskSub_(:);
+            obj.tMaskSub = tMaskSub_(:);
         end
 
+
         function smoothData(obj)
-            %% SMOOTHEDDATA Smooth the preprocessed data using a Gaussian kernel.
+            %% SMOOTHEDDATA Smooth the preprocessed data using a Gaussian kernel
             %
-            % The data is expected to be binned. If the useGpu property is true, the
-            % smoothing is performed using a GPU. The smoothed data is stored in the
-            % S_ property.
+            % Input:
+            %   obj - the NeuralEmbedding object
+            %
+            % Returns:
+            %   nothing
+            %
+            % Parameters:
+            %   The smoothing kernel width is set by the prekern property.
+            %   The causalSmoothing property determines if the smoothing is
+            %   causal or acausal. If the useGpu property is true, the smoothing
+            %   is performed using a GPU. The resulting smoothed data is stored
+            %   in the S_ property.
 
             obj.S_ = cellfun(@(x)NeuralEmbedding.smoother(x,...
                 obj.prekern,obj.causalSmoothing,obj.subsampling,obj.useGpu),...
@@ -589,13 +611,19 @@ classdef NeuralEmbedding < handle & ...
         end
 
         function zscoreData(obj)
-            %% ZSCOREDATA Zscore the data using the mean and std calculated from all the trials.
-            %
-            % The mean and std are calculated from all the trials and stored in the
-            % mu and ss properties. The data is then zscored using the following formula:
-            % data = (data - mu) ./ ss;
-            %
-            % The zscored data is stored in the S_ property.
+        %% ZSCOREDATA Z-score the data using the mean and standard deviation calculated from all trials
+        % This function computes the mean and standard deviation from all the trials
+        % and uses them to z-score the data.
+        %
+        % Input:
+        %   obj - the NeuralEmbedding object
+        %
+        % Returns:
+        %   nothing
+        %
+        % The z-scored data is stored in the S_ property, and the calculated mean
+        % and standard deviation are stored in the mu and ss properties, respectively.
+        % The data is z-scored using the formula: data = (data - mu) ./ ss;
 
             % Calculate mean and std from all the data
             obj.mu = mean([obj.S_{:}],2);
@@ -663,17 +691,25 @@ classdef NeuralEmbedding < handle & ...
         end
  
         function str = initMstruct(obj,data,type)
-           %% INITMSTRUCT Initialize a metrics structure.
+           %% INITMSTRUCT Initialize a metrics structure
             %
             % obj.initMstruct(data,type) initializes a metrics structure with the
             % data and type inputs. The resulting structure is stored in the str
             % output.
-                str = struct('type',type,...
+            %
+            % Input:
+            %   data - the data to be stored in the structure.
+            %   type - the type of the data to be stored in the structure.
+            %
+            % Returns:
+            %   str - the initialized structure.
+            str = struct('type',type,...
                 'date',datetime ,...
                 'condition',obj.cMask_,...
                 'data',data,...
                 'Area',obj.aMask_);
         end
+
     end
 
     %% Compute embeddings
@@ -697,6 +733,94 @@ classdef NeuralEmbedding < handle & ...
             reducedE = [reducedE{randperm(nT,MaxLines)}];
             plot3(reducedE(1,:),reducedE(2,:),reducedE(3,:))
         end
+
+        function peth(obj)
+            if not(obj.homogeneous)
+                warning("PETH is not available for Dishomogeneous data.%sAborting.",newline);
+                return;
+            end
+            f = figure('Units','pixels','Position',[4 42 1100 940],'Color',[1 1 1]);
+            BakCond = obj.cMask_;
+            BakArea = obj.aMask_;
+            ii = 1;
+            for aa = 1:numel(obj.UArea)
+                thisArea = obj.UArea(aa);
+                obj.aMask = thisArea;
+                for uu = 1:numel(obj.UConditions)
+                    thisCond = obj.UConditions(uu);
+                    obj.cMask = thisCond;
+
+
+                    dat = mean(cat(3,obj.S{:}),3);
+                    [~, MaxIdx] = max(dat,[],2);
+                    [~,OrderedIdx] = sort(MaxIdx);
+
+
+                    T = obj.TrialTime{1};
+                    ax = subplot(obj.nArea+1,obj.nCondition+1,ii);
+
+                    imagesc(ax,T,1:obj.nUnits,dat(OrderedIdx,:));
+                    xlabel(ax,'Time [s]');
+                    ylabel(ax,sprintf('Neurons %s',thisArea))
+                    ax.YAxis.TickValues = [];
+
+                    if aa==1
+                        title(ax,thisCond);
+                    end
+
+                    yl = ylim(ax);
+                    hold(ax,"on");
+                    plot(ax,[0 0],yl .* [.8 1.2],'w','Tag','zscore');
+                    ylim(ax,yl)
+                    box(ax,'off');
+                    % colorbar(ax)
+
+                    ii = ii + 1;
+                end
+            end
+            % linkprop(f.Children,'CLim');
+
+            %     if ii == 1 || ordered
+            %         [v,i] = max(Zdata{ii}(1:unitS1-1,:),[],2);
+            %         [~,idxRFA] = sort(i);
+            %     end
+            %     imagesc(ax,t-t(floor(numel(t)/2)),1:sum(~all(0 == Zdata{ii}(idxRFA,:),2)),Zdata{ii}(idxRFA(~all(isnan(Zdata{ii}(idxRFA,:)),2)),:));
+            % 
+            %     title(uCond{ii});
+            %     ax.YTickLabel = cellstr(num2str(idxRFA));
+            %     ax.XAxis.Visible = false;
+            %     hold on
+            %     yl = ylim(ax);
+            %     plot([0 0],yl .* [.8 1.2],'w');
+            %     ylim(ax,yl)
+            %     box off
+            %     colorbar
+            % 
+            % 
+            %     ax = subplot(2,numel(uCond),ii+numel(uCond));
+            %     if ii == 1 || ordered
+            %         [v,i] = max(Zdata{ii}(unitS1:end,:),[],2);
+            %         [~,idxS1] = sort(i);
+            %         idxS1 = idxS1 + unitS1-1;
+            %     end
+            %     imagesc(ax,t-t(floor(numel(t)/2)),1:size(Zdata{ii},1),Zdata{ii}(idxS1,:));
+            %     xlabel(ax,'Time [ms]');
+            %     ylabel(ax,'Neurons S1')
+            %     ax.YTickLabel = cellstr(num2str(idxS1));
+            %     hold on
+            %     yl = ylim(ax);
+            %     plot([0 0],yl .* [.8 1.2],'w');
+            %     ylim(ax,yl)
+            %     box off
+            %     colorbar
+            % 
+            %     
+            % 
+            % sgtitle(tankObj.Children(aa).Name);
+
+            obj.cMask = BakCond;
+            obj.aMask = BakArea;
+        end
     end
 
     %% Class data preview
@@ -719,51 +843,47 @@ classdef NeuralEmbedding < handle & ...
     methods(Static)
         % Gaussian kernel smoothing of data across time
         function Xs = smoother(X,kern,causal,binsize,gpu)
-            %
-            % Gaussian kernel smoothing of data across time.
-            %
-            % INPUTS:
-            %
-            % yIn      - input data (yDim x T)
-            % prekern   - standard deviation of Gaussian kernel, in msec
-            % stepSize - time between 2 consecutive datapoints in yIn, in msec
-            %
-            % OUTPUT:
-            %
-            % yOut     - smoothed version of yIn (yDim x T)
-            %
-            % OPTIONAL ARGUMENT:
-            %
-            % causal   - logical indicating whether temporal smoothing should
-            %            include only past data (true) or all data (false)
-            %
-            % Based on @ 2009 Byron Yu -- byronyu@stanford.edu
+        %% SMOOTHER Smooth the data using a Gaussian kernel
+        % This function smooths the data using a Gaussian kernel. The
+        % parameters for the smoothing are stored in the properties of the object.
+        %
+        % Input:
+        %   X - the data to be smoothed
+        %   kern - the standard deviation of the Gaussian kernel in samples
+        %   causal - whether to use causal or acausal smoothing
+        %   binsize - the width of the bins in samples
+        %   gpu - whether to use the GPU for the computation
+        %
+        % Returns:
+        %   Xs - the smoothed data
+        % Based on @ 2009 Byron Yu -- byronyu@stanford.edu
 
-            if (kern == 0)
-                return;
-            end
-
-            % Filter half length
-            % Go 3 standard deviations out
-            fltHL = ceil(3 * kern / binsize);
-
-            % Length of flt is 2*fltHL + 1
-            flt = normpdf(-fltHL*binsize : binsize : fltHL*binsize, 0, kern);
-
-            if causal
-                flt(1:fltHL) = 0;
-            end
-
-            if gpu
-                flt = gpuArray(flt);
-            end
-            [n,T]         = size(X);
-
-            % Normalize by sum of filter taps actually used
-            nm = ones(n,1) * conv(ones(1, T),flt,"same");
-            Xs = conv2(full(X), flt, "same") ./ nm;
+        if (kern == 0)
+            Xs = X;
+            return;
         end
-        
+
+        % Filter half length
+        % Go 3 standard deviations out
+        fltHL = ceil(3 * kern / binsize);
+
+        % Length of flt is 2*fltHL + 1
+        flt = normpdf(-fltHL*binsize : binsize : fltHL*binsize, 0, kern);
+
+        if causal
+            flt(1:fltHL) = 0;
+        end
+
+        if gpu
+            flt = gpuArray(flt);
+        end
+        [n,T]         = size(X);
+
+        % Normalize by sum of filter taps actually used
+        nm = ones(n,1) * conv(ones(1, T),flt,"same");
+        Xs = conv2(full(X), flt, "same") ./ nm;
+    end
+
         function Z = mergestructs(x, y)
         % MERGESTRUCTS    Merges two structures.
         %
@@ -808,6 +928,8 @@ classdef NeuralEmbedding < handle & ...
             % and R2(j,i) is the actual explained variance of X_j with respect to
             % X_i.
 
+            % Check if first input is transposed
+            % If it is, transpose it and change the size
             sz1 = size(varargin{1});
 
             % Check if first dimension is the number of samples
@@ -817,9 +939,10 @@ classdef NeuralEmbedding < handle & ...
             end %fi
 
             % Check if all inputs have the same size
+            % If not, throw an error
             for ii = 2:nargin
                 if ~all(diag(...
-                        sz1 == size(varargin{ii})' | fliplr(sz1) == size(varargin{ii})' ...
+                        sz1 == size(varargin{ii})' | fliplr(sz1) == size(varargin{ii})' ...\
                         ))
                     error('Input sizes must be consistent');
                 elseif all(diag(fliplr(sz1) == size(varargin{ii})'))
@@ -828,16 +951,33 @@ classdef NeuralEmbedding < handle & ...
             end %ii
 
             % Initialize R2 matrix
+            % This matrix is symmetric and R2(i,j) is the explained variance of
+            % the data in X_i with respect to X_j. If R2(i,j) > 1, it is set to 1
+            % and R2(j,i) is the actual explained variance of X_j with respect to
+            % X_i
             R2 = zeros(nargin);
 
             % Compute explained variances
+            % Loop over all pairs of inputs
             for ii = 1:nargin-1
                 X = varargin{ii};
+
+                % Loop over all remaining inputs
                 for jj = ii+1:nargin
                     Y = varargin{jj};
+
+                    % Compute the covariance matrix of X and Y
                     S = cov(X);
                     Srec = cov(Y);
+
+                    % Compute the explained variance of X with respect to Y
+                    % This is the trace of the covariance matrix of Y divided by
+                    % the trace of the covariance matrix of X
                     R2(ii,jj) = trace(Srec)/trace(S);
+
+                    % If the explained variance is greater than 1, set it to 1
+                    % and set the explained variance of Y with respect to X to the
+                    % actual value
                     if R2(ii,jj) > 1
                         R2(jj,ii) = trace(S)/trace(Srec);
                         R2(ii,jj) = 1;
@@ -848,6 +988,7 @@ classdef NeuralEmbedding < handle & ...
             end%ii
 
         end %explainedVar
+
         function value = calledByBase()
         % CALLEDBYBASE Returns true if current context is two level below base
         %
