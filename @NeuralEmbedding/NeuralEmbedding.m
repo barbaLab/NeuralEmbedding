@@ -731,6 +731,7 @@ classdef NeuralEmbedding < handle & ...
             nT = sum(obj.cMask);
             MaxLines = min(nT,80);
             reducedE = [reducedE{randperm(nT,MaxLines)}];
+            figure;
             plot3(reducedE(1,:),reducedE(2,:),reducedE(3,:))
         end
 
@@ -990,15 +991,105 @@ classdef NeuralEmbedding < handle & ...
         end %explainedVar
 
         function value = calledByBase()
-        % CALLEDBYBASE Returns true if current context is two level below base
-        %
-        % This function checks how far up the call stack base is. If
-        % base is two calls up, it means that the current function was
-        % called by base and it returns true. Otherwise, it returns false.
-        %
-        % See also: dbstack
+            % CALLEDBYBASE Returns true if current context is two level below base
+            %
+            % This function checks how far up the call stack base is. If
+            % base is two calls up, it means that the current function was
+            % called by base and it returns true. Otherwise, it returns false.
+            %
+            % See also: dbstack
             stack = dbstack('-completenames');
             value = numel(stack) < 3;
+        end
+        
+        % Bins spike timestamps aligned to triggers and returns a cell per trial wrapping a sparse matrix.
+        function D = makeSparseTrain(spikeTimes, unitIDs, triggers, window, binL)
+            % binSpikesToSparse - Bins spike timestamps aligned to triggers and returns a sparse matrix.
+            %
+            % Syntax:
+            %   spkMat = binSpikesToSparse(spikeTimes, unitIDs, triggers, window)
+            %   spkMat = binSpikesToSparse(spikeTimes, unitIDs, triggers, window, binL)
+            %
+            % Inputs:
+            %   spikeTimes - Vector of spike timestamps (in seconds).
+            %   unitIDs    - Vector of unit identifiers corresponding to each spike.
+            %   triggers   - Vector of trigger timestamps (in seconds) to which activity is aligned.
+            %   window     - Two-element vector [tStart, tEnd] defining the time window (in seconds)
+            %                relative to each trigger.
+            %   binL       - (Optional) Bin length in seconds (default: 0.001 sec, i.e. 1 ms).
+            %
+            % Output:
+            %   spkMat - Sparse matrix with nUnits rows and (nTrials*nBins) columns. Each row corresponds
+            %            to one unique unit and for each trigger the binned spike count in the specified
+            %            window is concatenated horizontally.
+            %
+            % Example:
+            %   % Generate example data:
+            %   spikeTimes = rand(1000,1)*10;    % 1000 spikes over 10 seconds
+            %   unitIDs    = randi(5, 1000, 1);    % spikes from 5 units
+            %   triggers   = 1:0.5:9.5;            % triggers every 0.5 sec from 1 to 9.5 sec
+            %   window     = [-0.1 0.3];           % analyze from 100 ms before to 300 ms after trigger
+            %   spkMat = binSpikesToSparse(spikeTimes, unitIDs, triggers, window);
+            %
+            % See also: histcounts, sparse
+
+            if nargin < 5 || isempty(binL)
+                binL = 0.001; % default bin length: 1 ms
+            end
+
+            % Determine unique units and basic dimensions
+            uniqueUnits = unique(unitIDs);
+            nUnits  = numel(uniqueUnits);
+            nTrials = numel(triggers);
+            nBins   = round((window(2) - window(1)) / binL); % number of bins per trial
+
+
+            % Define bin edges for histograms
+            edges = window(1):binL:window(2);
+
+            % Preallocate final cell array
+            D = cell(nTrials,1);
+
+            % Loop over trials and units to bin spikes
+            for trial = 1:nTrials
+                % Get the current trigger time
+                tTrigger = triggers(trial);
+
+                % For efficiency, find spikes that occur roughly in the whole window (plus margin)
+                % This can reduce searching time if spikeTimes is large.
+                trialStart = tTrigger + window(1);
+                trialEnd   = tTrigger + window(2);
+                trialSpkIdx = spikeTimes >= trialStart & spikeTimes < trialEnd;
+
+                % If no spikes fall in this trial window, skip to next trial.
+                if ~any(trialSpkIdx)
+                    spkMat = zeros(nUnits, nBins);
+                    D{trial} = sparse(spkMat);
+                    continue;
+                end
+
+                % Get the subset of spikes for this trial
+                relSpikeTimes = spikeTimes(trialSpkIdx) - tTrigger;
+                relUnitIDs    = unitIDs(trialSpkIdx);
+
+                % Preallocate sparse matrix:
+                % total columns = nTrials * nBins, rows = nUnits.
+                spkMat = zeros(nUnits, nBins);
+
+
+                % Process each unit separately
+                for u = 1:nUnits
+                    % Logical index for spikes from the current unit in this trial
+                    idx = (relUnitIDs == uniqueUnits(u));
+                    if any(idx)
+                        % Compute the histogram for this unit's spikes
+                        counts = histcounts(relSpikeTimes(idx), edges);
+                        % Place counts into the corresponding columns for this trial.
+                        spkMat(u, :) = counts;
+                    end
+                end
+                D{trial} = sparse(spkMat);
+            end
         end
 
     end
