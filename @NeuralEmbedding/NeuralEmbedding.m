@@ -61,6 +61,9 @@ classdef NeuralEmbedding < handle & ...
     end
 
     properties (GetAccess = public,SetAccess = private)
+        Animal
+        Session
+
         ProjMatrix                                                          % (Double) Projection Matrix to embedded data
         VarExplained                                                        % (Double) Variance explained by each embedded dimension
 
@@ -116,6 +119,9 @@ classdef NeuralEmbedding < handle & ...
                 opts.condition      (1,:) {mustBeText}    = string.empty
                 
                 opts.pars           (1,:) struct = struct.empty
+
+                opts.animal         (1,:) string = ""
+                opts.session        (1,:) string = ""
             end
 
 
@@ -725,7 +731,7 @@ classdef NeuralEmbedding < handle & ...
     %% Plot data
     methods
         function plot3(obj)
-            reducedE = cellfun(@(x)[x nan(3,1)], ...
+            reducedE = cellfun(@(x)[x(1:3,:) nan(3,1)], ...
                 obj.E, ...
                 'UniformOutput',false);
             nT = sum(obj.cMask);
@@ -733,6 +739,7 @@ classdef NeuralEmbedding < handle & ...
             reducedE = [reducedE{randperm(nT,MaxLines)}];
             figure;
             plot3(reducedE(1,:),reducedE(2,:),reducedE(3,:))
+            title(obj.Animal + " " +obj.Session)
         end
 
         function peth(obj)
