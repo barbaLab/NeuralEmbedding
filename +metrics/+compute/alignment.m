@@ -4,12 +4,13 @@ if isempty(data)
     theta = nan;
     return;
 end
-if nargin < 2
+if isempty(type)
     type = 'equidist';
-    nsec = 1;
-elseif nargin < 3
+end
+if isempty(nsec)
     nsec = 1;
 end
+
 
 [nUnits,Nt,nTraj] = size(data);
 
@@ -36,7 +37,7 @@ switch type
                 if idx ==1
                     idx = 2;
                 end
-                allIdx(tt,ss) = idx;
+                allIdx(tt,ss-1) = idx;
             end
         end
     case 'index'
