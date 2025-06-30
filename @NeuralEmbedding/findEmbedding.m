@@ -11,7 +11,6 @@ function [E,ProjMatrix,VarExplained] = findEmbedding(obj,type)
 
 % flag keeps track of whether the algorithm succeeded or not
 flag = true;
-
 % switch through the different algorithms
 switch deblank(type)
     case {'SmoothPCA','PCA','pca'}
@@ -120,13 +119,17 @@ if obj.Reproject
     obj.useTMask = flag;
 end
 
+% standardize data
+E_s = cellfun(@(x)(x - mean(x,2)./std(x,[],2)),...
+            E,'UniformOutput',false);
+
 % smooth data
 amask = ismember(obj.UArea,obj.aMask_);
 cmask = obj.cMask;
 % Smooth the data using the smoother
 obj.E_(cmask,amask) = cellfun(@(x)NeuralEmbedding.smoother(x,...
-            obj.prekern,obj.causalSmoothing,obj.subsampling,obj.useGpu),...
-            E,'UniformOutput',false);
+            obj.postkern,obj.causalSmoothing,obj.useGpu),...
+            E_s,'UniformOutput',false);
 
 end
 
