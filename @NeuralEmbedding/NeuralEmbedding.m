@@ -21,6 +21,10 @@ classdef NeuralEmbedding < handle & ...
         cMask       string                                                  % Condition vector mask, ie whar condition to use during computation
         
         Colors                                                              % (double) Matrix containing colors for each condition
+    
+        PreKern
+        PostKern
+        BinWidth
     end
 
     % Parameters
@@ -30,7 +34,7 @@ classdef NeuralEmbedding < handle & ...
         acceptanceRatio         = .05;
 
         % binData
-        binWidth                = 5;
+        binwidth                = 5;
         useSqrt                 = false;
 
         % smoothData
@@ -163,6 +167,10 @@ classdef NeuralEmbedding < handle & ...
             obj.tMask = cellfun(@(t) true(length(t),1),obj.TrialTime_,...
                 'UniformOutput',false);
             
+            obj.Animal = opts.animal;
+            obj.Session = opts.session;
+
+
             obj.setPars(opts.pars)
 
             performPrePro(obj);
@@ -183,7 +191,7 @@ classdef NeuralEmbedding < handle & ...
             % 
             % Data binning, <a href="matlab:help NeuralEmbedding.binData">binData()</a>
             % Pars:
-            %   - binWidth: the width of the bins in samples
+            %   - binwidth: the width of the bins in samples
             % 
             % Data smoothing, <a href="matlab:help NeuralEmbedding.smoothData">smoothData()</a>
             % Pars:
@@ -277,7 +285,10 @@ classdef NeuralEmbedding < handle & ...
         end
 
         function value = get.M(obj)
-            value = struct2table(obj.M_);
+            this = obj.M_;
+            [this.animal] = deal(obj.Animal);
+            [this.session] = deal(obj.Session);
+            value = struct2table(this);
         end
         
         % Returns unique experimental conditions.
@@ -476,6 +487,30 @@ classdef NeuralEmbedding < handle & ...
                 error('Input is either not string or does not match conditions provided during initialization.')
             end
         end
+   
+        function value = get.PreKern(obj)
+            value = obj.prekern;
+        end
+        function set.PreKern(obj,val)
+            ts = diff(obj.TrialTime_{1}(1:2));
+            obj.prekern = round(val*1e-3/ts);
+            obj.performPrePro();
+        end
+
+         function value = get.PostKern(obj)
+            value = obj.postkern;
+        end
+        function set.PostKern(obj,val)
+            ts = diff(obj.TrialTime_{1}(1:2));
+            obj.postkern = round(val*1e-3/ts);
+        end
+
+        function set.BinWidth(obj,val)
+            ts = diff(obj.TrialTime_{1}(1:2));
+            obj.binwidth = round(val*1e-3/ts);
+            obj.performPrePro();
+        end
+    
     end 
     %% Preprocessing methods
     methods (Access = private)
@@ -485,7 +520,8 @@ classdef NeuralEmbedding < handle & ...
             pNames = fieldnames(pars);
             for pp = 1:numel(pNames)
                 pn = pNames{pp};
-                set(obj,pn,pars.(pn));
+                obj.(pn) = pars.(pn);
+                % set(obj,pn,pars.(pn));
             end
         end
     
@@ -565,16 +601,16 @@ classdef NeuralEmbedding < handle & ...
         %   nothing
         %
         % Parameters:
-        %   The bin width is set by the binWidth property. The resulting
+        %   The bin width is set by the binwidth property. The resulting
         %   subsampling property reflects the new bin width.
 
             T     = cellfun(@length,obj.TrialTime);
-            Tdown = floor(T./obj.binWidth);
-            Trest = T - Tdown*obj.binWidth;
+            Tdown = floor(T./obj.binwidth);
+            Trest = T - Tdown*obj.binwidth;
 
             % Binning as block diagonal matrix multiplication
             blk = arrayfun(@(t)...
-                repmat({ones(obj.binWidth,1)},t,1),...
+                repmat({ones(obj.binwidth,1)},t,1),...
                 Tdown,'UniformOutput',false);
 
             A = arrayfun(@(thisblk,tr,t)[blkdiag(thisblk{1}{:});sparse(tr,t)],...
@@ -585,7 +621,7 @@ classdef NeuralEmbedding < handle & ...
                 obj.P_,A(:),...
                 'UniformOutput',false);
 
-            obj.subsampling = obj.binWidth;
+            obj.subsampling = obj.binwidth;
 
             tMaskSub_ = cellfun(@(tm,a)logical(round(tm' * a./obj.subsampling)),...
                 obj.tMask_,A,...
@@ -611,7 +647,7 @@ classdef NeuralEmbedding < handle & ...
             %   in the S_ property.
 
             obj.S_ = cellfun(@(x)NeuralEmbedding.smoother(x,...
-                obj.prekern,obj.causalSmoothing,obj.subsampling,obj.useGpu),...
+                obj.prekern,obj.causalSmoothing,obj.useGpu),...
                 obj.P_,'UniformOutput',false);
 
         end
@@ -721,6 +757,10 @@ classdef NeuralEmbedding < handle & ...
     %% Compute embeddings
     methods (Access=public)
          flag = findEmbedding(obj,type,Area)
+
+         function flag = addEvents(obj,evt)
+             % TODO add behavioural events to be stored in a trial by trial base
+         end
     end
 
     %% Compute manifold metrices
@@ -733,13 +773,25 @@ classdef NeuralEmbedding < handle & ...
         function plot3(obj)
             reducedE = cellfun(@(x)[x(1:3,:) nan(3,1)], ...
                 obj.E, ...
+                'UniformOutput',false);            
+            t = cellfun(@(t)[t' nan], ...
+                obj.TrialTime, ...
                 'UniformOutput',false);
             nT = sum(obj.cMask);
             MaxLines = min(nT,80);
-            reducedE = [reducedE{randperm(nT,MaxLines)}];
+            idx = randperm(nT,MaxLines);
+            reducedE = [reducedE{idx}];
+            t = [t{idx}];
             figure;
-            plot3(reducedE(1,:),reducedE(2,:),reducedE(3,:))
+            surface([reducedE(1,:);reducedE(1,:)], ...
+                 [reducedE(2,:);reducedE(2,:)], ...
+                 [reducedE(3,:);reducedE(3,:)], ...
+                 [t;t], ...
+                 'facecol','no',...
+                 'edgecol','interp',...
+                 'linew',1)
             title(obj.Animal + " " +obj.Session)
+            colorbar
         end
 
         function peth(obj)
@@ -850,7 +902,7 @@ classdef NeuralEmbedding < handle & ...
     %% Usefull generic methods
     methods(Static)
         % Gaussian kernel smoothing of data across time
-        function Xs = smoother(X,kern,causal,binsize,gpu)
+        function Xs = smoother(X,kern,causal,gpu)
         %% SMOOTHER Smooth the data using a Gaussian kernel
         % This function smooths the data using a Gaussian kernel. The
         % parameters for the smoothing are stored in the properties of the object.
@@ -873,10 +925,10 @@ classdef NeuralEmbedding < handle & ...
 
         % Filter half length
         % Go 3 standard deviations out
-        fltHL = ceil(3 * kern / binsize);
+        fltHL = ceil(3 * kern );
 
         % Length of flt is 2*fltHL + 1
-        flt = normpdf(-fltHL*binsize : binsize : fltHL*binsize, 0, kern);
+        flt = normpdf(-fltHL : 1 : fltHL, 0, kern);
 
         if causal
             flt(1:fltHL) = 0;
