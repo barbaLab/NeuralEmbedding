@@ -50,6 +50,7 @@ function Dout = Struct(Din,opts,returnDinLabel)
         Dout = datareader.is.Struct(Din);
         if Dout
             [Dout,dishomogeneous] = ValidateArgs(Din,opts);
+            Dout = true;
             return;
         end
     elseif nargin == 3 && returnDinLabel
@@ -61,6 +62,7 @@ function Dout = Struct(Din,opts,returnDinLabel)
             return;
         end
     end
+
 end %nargin
 
 % Validates the input options and the input data
@@ -83,7 +85,7 @@ function [Din,dishomogeneous] = ValidateArgs(Din,opts)
     fnames = fieldnames(Din);
     fnames = string(fnames);
     fields2check = ["data","time","condition","area"];
-    fieldType    = ["numeric","numeric","string","string"];
+    fieldType    = ["numeric","cell","string","string"];
 
     Din_ = repmat(struct(),size(Din));
 

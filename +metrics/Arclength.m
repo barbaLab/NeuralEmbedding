@@ -10,4 +10,4 @@ function M = Arclength(E,pars)
 FormttedData = cellfun(@(x)num2cell(x,2),E,'UniformOutput',false);
 M = cellfun(@(x) metrics.compute.arclength(x{:}, pars.method),...
             FormttedData);
-M = median(M);
+M = median(M,"omitnan");
