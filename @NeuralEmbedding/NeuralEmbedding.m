@@ -51,6 +51,9 @@ classdef NeuralEmbedding < handle & ...
         numPC                   = 3;
         VarExp                  = .8;
 
+        % MCCA regularization parameter
+        mcca_k                  = 0.9;  % Add this line
+
         % General
         useGpu                  = false
         useParallel             = false

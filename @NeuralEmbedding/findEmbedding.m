@@ -75,6 +75,79 @@ switch deblank(type)
             rethrow(er);
             return;
         end
+
+    case {'MCCA','mcca'}
+        type = "MCCA";
+        % Get the names of the parameters for this algorithm
+        parNames = ["numPC","nArea","nTrial","TrialL","mcca_k"];
+        % Get the parameters for this algorithm
+        pars = obj.assignEPars(parNames,type);
+
+        % Set default value for mcca_k if not provided
+        if ~isfield(pars, 'mcca_k') || isempty(pars.mcca_k)
+            pars.mcca_k = 0.9; % Default regularization
+        end
+
+        try
+            % Prepare data for MCCA - each area as a separate dataset
+            nTrials = obj.nTrial;
+            nAreas = obj.nArea;
+
+            % Get the unique areas
+            areas = unique(obj.Area);
+
+            % Create D matrix with trials as rows and areas as columns
+            D = cell(1, nAreas);
+            thisAMask = obj.aMask_;
+            for a = 1:nAreas
+                % Set the area mask to the current area
+                obj.aMask = areas(a);
+
+                % Get the data for the current area
+              
+                areaData = obj.S;
+                D{:, a} = cat(2,areaData{:});
+            end
+            
+            % Reset the area mask to all areas
+            obj.aMask = thisAMask;
+
+            % Check if all trials have the same number of time points
+            nTimePoints = cellfun(@(x) size(x, 1), D);
+            if any(nTimePoints ~= nTimePoints(1))
+                error('All trials must have the same number of time points for MCCA');
+            end
+
+            % Get number of neurons in each area
+            DimensionsPerArea = cellfun(@(x)size(x,1),D);
+            X = cat(1,D{:})';
+
+            % Run MCCA
+            [V, rho, A] = embedding.MCCA.mcca(X, DimensionsPerArea, [], []);
+
+            % Store the full projection matrix
+            obj.ProjMatrix = A;
+
+            % Extract the requested number of components
+            numPC = min(pars.numPC, size(V, 2));
+            VarExplained = rho(1:numPC);
+            obj.VarExplained = VarExplained;
+
+            % Create embeddings for each trial
+            E = cell(nTrials, nAreas);
+            for t = 1:nTrials
+                for a = 1:nAreas
+                    % Create the embedding for this trial and area
+                    E{t, a} = A{a} * D{t, a};
+                end
+            end
+
+    catch er
+        flag = false;
+        rethrow(er);
+        return;
+    end
+    
     case {'umap','UMAP'}
         type = "UMAP";
         % UMAP is not yet supported. Print a message and return
