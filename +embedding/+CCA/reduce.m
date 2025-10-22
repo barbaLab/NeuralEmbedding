@@ -1,7 +1,7 @@
 function [E,C,Corr] = reduce(D,pars)
         % CCAREDUCE Internal function for CCA
 
-        % Agglomerate all of the conditions, and perform PCA
+        % Agglomerate all of the conditions, and perform mCCA
         E_ = cell(1,pars.nArea);
         C = cell(size(D));
         Corr = cell(size(D));
@@ -19,18 +19,19 @@ function [E,C,Corr] = reduce(D,pars)
             [A,B,Corr,E_{1},E_{2}] = canoncorr(D{:});
             C = {A(:,1:dims),B(:,1:dims)};
         else
-            data = cat(1,D{:})';
+            data = arrayfun(@(Aidx)cat(2,D{:,Aidx}),1:size(D,2),'UniformOutput',false);
             d = cellfun(@(x)size(x,1),D);
-            [~,Corr,C] = embedding.CCA.mcca(data,d);
+            [~,Corr,C] = embedding.CCA.mcca(cat(1,data{:})',d);
+            E_ = cellfun(@(d,c) c * d,data,C,'UniformOutput',false);
         end
 
         % [U,V] = checkFlip(D{:},C{:},endLeg_range, interest_range);
 
         % For each condition, store the reduced version of each data vector
         E = cell(pars.nTrial,pars.nArea);
-        for ii = 1:pars.nTrial
+        for jj = 1:pars.nArea
             index = 0;
-            for jj = 1:pars.nArea
+            for ii = 1:pars.nTrial
                 E{ii,jj} = E_{jj}(index + (1:pars.TrialL),1:dims)';
                 index = index + pars.TrialL;
             end

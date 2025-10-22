@@ -100,5 +100,5 @@ function [E,C,VarExp] = reduce(seqTrain, seqTest, varargin)
   [E{:}] = deal(AllSeq.xsm);
   [~, C{1}] = embedding.GPFA.util.orthogonalize([AllSeq.xsm], estParams.C);
   [~,lat] = pcacov(estParams.C * estParams.C');
-  VarExp{1} = cumsum(lat(1:xDim))./sum(lat);
+  VarExp{1} = cumsum(lat(xDim))./sum(lat);
 end

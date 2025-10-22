@@ -8,6 +8,10 @@ classdef NeuralEmbedding < handle & ...
         S   cell                                                            % Smoothed data
         E   cell                                                            % Embedded data
         M   struct
+
+        W   cell                                                            % Projection Matrix
+        Winv cell                                                           % inverse projection matrix
+
         TrialTime   double                                                  % Trial time vector
         TrialL      int64                                                   % Trial length in bins
         
@@ -25,6 +29,10 @@ classdef NeuralEmbedding < handle & ...
         PreKern
         PostKern
         BinWidth
+
+        VarExplained                                                        % (Double) Variance explained by each embedded dimension
+        NumPC                   
+
     end
 
     % Parameters
@@ -48,8 +56,10 @@ classdef NeuralEmbedding < handle & ...
         useTMask                = true;
         postkern                = 0;
         Reproject               = false
-        numPC                   = 3;
         VarExp                  = .8;
+
+        % MCCA regularization parameter
+        mcca_k                  = 0.9;  % Add this line
 
         % General
         useGpu                  = false
@@ -69,7 +79,6 @@ classdef NeuralEmbedding < handle & ...
         Session
 
         ProjMatrix                                                          % (Double) Projection Matrix to embedded data
-        VarExplained                                                        % (Double) Variance explained by each embedded dimension
 
         Area    string                                                      % String array with area classification of each unit/channel
         Conditions string                                                   % String array with area classification of each unit/channel
@@ -89,17 +98,27 @@ classdef NeuralEmbedding < handle & ...
         aMask_      string = "AllNeurons"                                   % stored area mask
         cMask_      string = "AllConditions"                                % stored condition mask
 
-        P_ cell                                                             % prepro data, ie binned and pruned for inactive neurons
-        S_ cell                                                             % Smoothed data
-        E_ cell                                                             % Embedded data
         M_ = ...
             struct('type',[],'date',[],'condition',...                      % Metrics struct storing quality matrics.
             [],'data',[],'Area',[]);
 
+        W_ cell                                                            % projection matrix
+        Winv_ cell                                                         % inverse projection matrix
         mu  double = 0                                                     % per unit mean 
         ss  double = 1                                                     % per unit variance 
         subsampling double = 1                                             % subsampling, it is updated after binning
-        homogeneous logical = false                                    % flag for trial homogenuity. If all trials all equally long, this is 0
+        homogeneous logical = false                                        % flag for trial homogenuity. If all trials all equally long, this is 0
+
+        currentEmbeddingMethod string = ""
+        VarExplained_ double                                               % cell storing variance explained values
+        numPC double = 6
+    end
+
+    % Transient stores
+    properties (Access = private, Transient = true)
+        P_ cell                                                             % prepro data, ie binned and pruned for inactive neurons
+        S_ cell                                                             % Smoothed data
+        E_ cell                                                             % Embedded data
     end
     
     %% Constructor
@@ -153,6 +172,9 @@ classdef NeuralEmbedding < handle & ...
             obj.nCondition = numel(unique(Condition));
             % Pre-allocate the embedded data
             obj.E_  = cell(nTrial,1 + obj.nArea);
+            obj.W_  = cell(nTrial,1 + obj.nArea);
+            obj.Winv_  = cell(nTrial,1 + obj.nArea);
+
             % Store the original trial time
             obj.TrialTime_ = TrialTime(:);            
             % Store the number of units and trials
@@ -282,13 +304,51 @@ classdef NeuralEmbedding < handle & ...
             amask = ismember(obj.UArea,obj.aMask_);
             cmask = obj.cMask;
             value = obj.E_(cmask,amask);
+            value = cellfun(@(e)e(1:obj.numPC,:),value, ...
+                'UniformOutput',false,'ErrorHandler',@(S,n)errorFunc(S,obj.numPC));
+
+            function e = errorFunc(S,varargin)
+                e = zeros(varargin{1},0);
+            end
+
+        end
+
+        function value = get.W(obj)
+            amask = ismember(obj.UArea,obj.aMask_);
+            value = obj.W_(amask);
+            value = cellfun(@(w)w(1:obj.numPC,:),value, ...
+                'UniformOutput',false,'ErrorHandler',@(S,n)errorFunc(S,obj.numPC));
+            function e = errorFunc(S,varargin)
+                e = zeros(varargin{1},0);
+            end
+        end
+        function value = get.Winv(obj)
+            amask = ismember(obj.UArea,obj.aMask_);
+            if isempty(obj.Winv_{amask})
+                obj.Winv_{amask} = pinv(obj.W_{amask});
+            end
+            value = obj.Winv_(amask);
+            value = cellfun(@(w)w(:,1:obj.numPC),value, ...
+                'UniformOutput',false,'ErrorHandler',@(S,n)errorFunc(S,obj.numPC));
+            function e = errorFunc(S,varargin)
+                e = zeros(0,varargin{1});
+            end
         end
 
         function value = get.M(obj)
             this = obj.M_;
+            if all(arrayfun(@(t)all(structfun(@isempty,t)),this))
+                this = this([]);
+            end
+
             [this.animal] = deal(obj.Animal);
             [this.session] = deal(obj.Session);
-            value = struct2table(this);
+            args = {};
+            if isscalar(this)
+                args = [args,{"AsArray",true}];
+            end
+            value = struct2table(this,args{:});
+            
         end
         
         % Returns unique experimental conditions.
@@ -298,7 +358,7 @@ classdef NeuralEmbedding < handle & ...
 
         % Returns unique experimental conditions.
         function value = get.UArea(obj)
-            value = [string(unique(obj.Area(:))); "AllNeurons"];
+            value = [string(unique(obj.Area(not(ismissing(obj.Area))))); "AllNeurons"];
         end
        
         % Returns updated TrialTime wrt subsampling and tMask.
@@ -503,12 +563,40 @@ classdef NeuralEmbedding < handle & ...
         function set.PostKern(obj,val)
             ts = diff(obj.TrialTime_{1}(1:2));
             obj.postkern = round(val*1e-3/ts);
+            for ar = obj.UArea'
+                obj.aMask = ar;
+                obj.findEmbedding(obj.currentEmbeddingMethod,true);
+            end
         end
 
         function set.BinWidth(obj,val)
             ts = diff(obj.TrialTime_{1}(1:2));
             obj.binwidth = round(val*1e-3/ts);
             obj.performPrePro();
+        end
+        function value = get.BinWidth(obj)
+            ts = diff(obj.TrialTime_{1}(1:2));
+            value = obj.binwidth*ts*1e3;
+        end
+    
+        function value = get.VarExplained(obj)
+            amask = ismember(obj.UArea,obj.aMask_);
+            if isempty(obj.VarExplained_) || ...
+                    length(obj.VarExplained_) < find(amask,1,'last')
+                orignial = cat(2,obj.S{:});
+                projected = obj.Winv{:} * cat(2,obj.E{:});
+                r2 = obj.explainedVar(orignial,projected);
+                obj.VarExplained_(amask) = r2(1,2);
+            end
+            value = obj.VarExplained_(amask);
+        end
+   
+        function value = get.NumPC(obj)
+            value = obj.numPC;
+        end
+        function set.NumPC(obj,value)
+            obj.numPC = ceil(value);
+            obj.VarExplained_ = repmat([],1,obj.nArea);
         end
     
     end 
@@ -604,7 +692,7 @@ classdef NeuralEmbedding < handle & ...
         %   The bin width is set by the binwidth property. The resulting
         %   subsampling property reflects the new bin width.
 
-            T     = cellfun(@length,obj.TrialTime);
+            T     = cellfun(@length,obj.TrialTime_);
             Tdown = floor(T./obj.binwidth);
             Trest = T - Tdown*obj.binwidth;
 
@@ -689,6 +777,13 @@ classdef NeuralEmbedding < handle & ...
             %   3. The resulting parameters are merged using the mergestructs
             %      method.
             % Load method parameters
+            if not(isscalar(obj))
+                pars = assignEPars(obj(1),names,method);
+                for ii=2:numel(obj)
+                    pars = [pars,assignEPars(obj(ii),names,method)];
+                end
+                return;
+            end
             methodPars = embedding.(method).loadParams();
 
             % Load default parameters from properties
@@ -771,6 +866,10 @@ classdef NeuralEmbedding < handle & ...
     %% Plot data
     methods
         function plot3(obj)
+            if not(isscalar(obj))
+                arrayfun(@(o)o.plot3,obj);
+                return;
+            end
             reducedE = cellfun(@(x)[x(1:3,:) nan(3,1)], ...
                 obj.E, ...
                 'UniformOutput',false);            
@@ -791,6 +890,7 @@ classdef NeuralEmbedding < handle & ...
                  'edgecol','interp',...
                  'linew',1)
             title(obj.Animal + " " +obj.Session)
+            xlabel('Dimension 1');ylabel('Dimension 2');zlabel('Dimension 3');
             colorbar
         end
 
@@ -889,7 +989,9 @@ classdef NeuralEmbedding < handle & ...
             if ~isscalar(obj)
                 propgrp = getPropertyGroups@matlab.mixin.CustomDisplay(obj);
             else
-                propList = struct('Units',obj.nUnits,...
+                propList = struct('Animal',obj.Animal,...
+                    'Session',obj.Session,...
+                    'Units',obj.nUnits,...
                     'Trials',obj.nTrial,...
                     'Trial_names',obj.UConditions,...
                     'Areas',obj.UArea,...
@@ -898,6 +1000,18 @@ classdef NeuralEmbedding < handle & ...
                 propgrp = matlab.mixin.util.PropertyGroup(propList);
             end
         end
+    
+        function sobj = saveobj(obj)
+        %     % sobj = struct(obj);
+        %     % sobj = rmfield(sobj, ...
+        %     %     ["D","P","S","E","M"]);
+        %     E_ = obj.E_;S_ = obj.S_; P_ = obj.P_;
+        %     [obj.E_,obj.S_,obj.P_] = deal({});
+            sobj = (obj);
+        %     [obj.E_,obj.S_,obj.P_] = deal(E_,S_,P_);
+        end
+
+        
     end
     %% Usefull generic methods
     methods(Static)
@@ -1004,7 +1118,9 @@ classdef NeuralEmbedding < handle & ...
                 if ~all(diag(...
                         sz1 == size(varargin{ii})' | fliplr(sz1) == size(varargin{ii})' ...\
                         ))
-                    error('Input sizes must be consistent');
+                    warning('Input sizes must be consistent');
+                    R2 = nan(2);
+                    return;
                 elseif all(diag(fliplr(sz1) == size(varargin{ii})'))
                     varargin{ii} = varargin{ii}';
                 end
@@ -1151,6 +1267,39 @@ classdef NeuralEmbedding < handle & ...
             end
         end
 
+        function obj = loadobj(obj)
+            fprintf(1,'Loading %s.%s: loading data ',obj.Animal,obj.Session);
+            obj.E_  = cell(obj.nTrial,1 + obj.nArea);
+            fprintf(1,repmat('\b',1,13));
+            fprintf(1,'preprocessing');
+            performPrePro(obj);
+            
+            fprintf(1,repmat('\b',1,13));
+            fprintf(1,'projecting');
+            currentAmask = unique(obj.Area(obj.aMask));
+            for ar = obj.UArea(:)'
+                obj.aMask = ar;
+                E = ...
+                    embedding.(obj.currentEmbeddingMethod).project(obj.S,obj.W);
+                % standardize data
+                E_s = cellfun(@(x)(x - mean(x,2)./std(x,[],2)),...
+                    E,'UniformOutput',false);
+
+                fprintf(1,repmat('\b',1,10));
+                fprintf(1,'smoothing');
+                amask = ismember(obj.UArea,obj.aMask_);
+                cmask = obj.cMask;
+                % Smooth the data using the smoother
+                obj.E_(cmask,amask) = cellfun(@(x)NeuralEmbedding.smoother(x,...
+                    obj.postkern,obj.causalSmoothing,obj.useGpu),...
+                    E_s,'UniformOutput',false);
+            end
+            obj.aMask = currentAmask;
+            fprintf(1,repmat('\b',1,9));
+            fprintf(1,'done!');
+            fprintf(1,'\n');
+
+        end
     end
 end
 

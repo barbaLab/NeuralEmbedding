@@ -1,4 +1,4 @@
-function [E,ProjMatrix,VarExplained] = findEmbedding(obj,type)
+function [E,W,VarExplained] = findEmbedding(obj,type, projectOnly)
 % This function computes the embedding of the data using the specified
 % algorithm. Supported algorithms are PCA, GPFA, CCA, UMAP, t-SNE, and
 % Identity. If the algorithm is not recognized, it throws an error.
@@ -11,6 +11,12 @@ function [E,ProjMatrix,VarExplained] = findEmbedding(obj,type)
 
 % flag keeps track of whether the algorithm succeeded or not
 flag = true;
+
+if nargin<3
+    projectOnly = false;
+end
+
+
 % switch through the different algorithms
 switch deblank(type)
     case {'SmoothPCA','PCA','pca'}
@@ -19,16 +25,18 @@ switch deblank(type)
         parNames = ["numPC"];
         % Get the parameters for this algorithm
         pars = obj.assignEPars(parNames,type);
-        try
+        pars.numPC = min(sum(obj.aMask),30);
+        pars.projectOnly = projectOnly;
+        % try
             % Compute the embedding using PCA
-            [E,obj.ProjMatrix,obj.VarExplained] = ...
-                embedding.PCA(obj.S,pars);
-        catch er
-            % If the algorithm fails, set flag to false and rethrow the error
-            flag = false;
-            rethrow(er);
-            return;
-        end
+            [E,W,Winv,VarExplained] = ...
+                embedding.PCA(obj.S,pars,obj.W,{obj.VarExplained});
+        % catch er
+        %     % If the algorithm fails, set flag to false and rethrow the error
+        %     flag = false;
+        %     rethrow(er);
+        %     return;
+        % end
 
     case {'GPFA','gpfa'}
         type = "GPFA";
@@ -36,10 +44,13 @@ switch deblank(type)
         parNames = ["subsampling","numPC","TrialL"];
         % Get the parameters for this algorithm
         pars = obj.assignEPars(parNames,type);
+        pars.numPC = min(sum(obj.aMask),30);
+        pars.projectOnly = projectOnly;
         try
             % GPFA does not need presmoothing. It gets as input P instead of S
-            [E, obj.ProjMatrix, obj.VarExplained] = ...
-                embedding.GPFA(obj.P, pars);                                             
+            [E, W, VarExplained] = ...
+                embedding.GPFA(obj.P, pars, obj.W, {obj.VarExplained});       
+            Winv = {pinv(W{1})};
         catch er
             % If the algorithm fails, set flag to false and rethrow the error
             flag = false;
@@ -67,7 +78,7 @@ switch deblank(type)
             % Set the area mask to all areas
             obj.aMask = obj.UArea(1:end-1);
             % Compute the CCA
-            [E,obj.ProjMatrix,obj.VarExplained] = ...
+            [E,W,VarExplained] = ...
                 embedding.CCA(D,pars);
         catch er
             % If the algorithm fails, set flag to false and rethrow the error
@@ -75,33 +86,68 @@ switch deblank(type)
             rethrow(er);
             return;
         end
+
+    case {'MCCA','mcca'}
+        if isscalar(obj)
+            [E,W,VarExplained] = findEmbedding(obj,'CCA');
+            return;
+        else
+        type = "MCCA";
+        % Get the names of the parameters for this algorithm
+        parNames = ["nTrial","TrialL","mcca_k"];
+        % Get the parameters for this algorithm
+        pars = obj.assignEPars(parNames,type);
+        try
+            thisNumPc = {obj.NumPC};
+            [obj.NumPC] = deal(30);
+            % Run MCCA
+            [E,W,Winv,Corr]  = embedding.MCCA({obj.E},pars);
+            [obj.NumPC] = deal(thisNumPc{:});
+
+            for ss = 1:numel(obj)
+                amask = ismember(obj(ss).UArea,obj(ss).aMask_);
+                cmask = obj(ss).cMask;
+                % Smooth the data using the smoother
+                obj(ss).E_(cmask,amask) = E{ss};
+                obj(ss).W_(amask) = {W{1} * obj(ss).W_{amask}};
+                obj(ss).Winv_(amask) = {obj(ss).Winv_{amask} * Winv{1}};
+            end
+            return;
+        catch er
+            flag = false;
+            rethrow(er);
+            return;
+        end
+        end
     case {'umap','UMAP'}
         type = "UMAP";
         % UMAP is not yet supported. Print a message and return
         fprintf("%s support is WIP. Stay tuned!%s",type,newline);
-        % [E,obj.ProjMatrix,obj.VarExplained] = ...
+        % [E,W,VarExplained] = ...
         %     smoothUMAP(D,pars_);
 
     case {'t-SNE','tsne','tSNE','t-sne'}
         type = "tSNE";
         % tSNE is not yet supported. Print a message and return
         fprintf("%s support is WIP. Stay tuned!%s",type,newline);
-        % [E,obj.ProjMatrix,obj.VarExplained] = ...
+        % [E,W,VarExplained] = ...
         %     smoothTSNE(D,pars_);
 
     case {'I','identity','noproject','noProject'}
         type = "I";
         % For the identity embedding, just return the original data and
         % matrix
-        [E,obj.ProjMatrix,obj.VarExplained] = ...
+        [E,W,VarExplained] = ...
             deal(obj.S,...
             eye(obj.nUnits),...
             NeuralEmbedding.explainedVar([obj.S{:}], [obj.S{:}]));
 
     otherwise
         % If the algorithm is not recognized, return NaNs
-        [E,obj.ProjMatrix,obj.VarExplained] = deal(nan);
+        [E,W,VarExplained] = deal(nan);
 end
+
+obj.currentEmbeddingMethod = type;
 
 
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
@@ -112,9 +158,8 @@ if obj.Reproject
     flag = obj.useTMask;
     obj.useTMask = false;
     % Reproject the data using the projection matrix
-    E = arrayfun(@(a_idx)embedding.(type).project(obj.S(:,a_idx), obj.ProjMatrix(:,a_idx)),1:size(obj.S,2),'UniformOutput',false);
+    E = arrayfun(@(a_idx)embedding.(type).project(obj.S(:,a_idx), W(a_idx)),1:size(obj.S,2),'UniformOutput',false);
     E = cat(2,E{:});
-    % E = embedding.(type).project(obj.S, obj.ProjMatrix);
     % Reset the mask to its original value
     obj.useTMask = flag;
 end
@@ -130,6 +175,8 @@ cmask = obj.cMask;
 obj.E_(cmask,amask) = cellfun(@(x)NeuralEmbedding.smoother(x,...
             obj.postkern,obj.causalSmoothing,obj.useGpu),...
             E_s,'UniformOutput',false);
-
+obj.W_(amask) = W;
+obj.Winv_(amask) = Winv;
+obj.VarExplained_(amask) = VarExplained{1};
 end
 

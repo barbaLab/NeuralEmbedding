@@ -85,7 +85,7 @@ function [Din,dishomogeneous] = ValidateArgs(Din,opts)
     fnames = fieldnames(Din);
     fnames = string(fnames);
     fields2check = ["data","time","condition","area"];
-    fieldType    = ["numeric","cell","string","string"];
+    fieldType    = ["numeric","double","string","string"];
 
     Din_ = repmat(struct(),size(Din));
 
@@ -151,11 +151,11 @@ function [Din,dishomogeneous] = ValidateArgs(Din,opts)
                 'Provided time and input data dimension mismatch. Please provide,for each trial, a time struct field matching data second dimension.');
         end
     else
-        assert(iscell(opts.time),...
-            'Struct input detected. Please provide a cell array of time vectors, one per trial.');
+        % assert(iscell(opts.time),...
+        %     'Struct input detected. Please provide a cell array of time vectors, one per trial.');
 
-        assert(length(opts.time{1}) == unique(Time),...
-                'Provided time and input data dimension mismatch. Please provide a cell array of time vectors matching trial lenghts.');
+        % assert(length(opts.time{1}) == unique(Time),...
+        %         'Provided time and input data dimension mismatch. Please provide a cell array of time vectors matching trial lenghts.');
 
         dishomogeneous = false;
     end
