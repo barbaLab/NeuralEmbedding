@@ -45,7 +45,7 @@ function ValidateArgs(Din,opts)
 %       area (string): Area labels ( 1 x nUnits )
 %       condition (string): Condition labels ( 1 x nTrials )
 %
-
+optsDefault = structfun(@isempty,opts,'UniformOutput',false);
 [nUnits,Time,nTrials] = size(Din);
 
 % Checks if the time vector matches the input data second dimension

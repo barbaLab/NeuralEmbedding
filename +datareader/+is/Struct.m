@@ -94,7 +94,7 @@ function [Din,dishomogeneous] = ValidateArgs(Din,opts)
     % If required field is not present, checks in opts 
     for ff = [fields2check; fieldType]
         % retrieve the correct fieldname between those accepted
-        thisFieldName = fnames(ismember(fnames,datareader.is.Struct(ff(1))));
+        thisFieldName = fnames(find(ismember(fnames,datareader.is.Struct(ff(1))),1,'first'));
         if isempty(thisFieldName) && optsDefault.(ff(1))
             error("No field %s provided in opts struct.\n",ff(1));
         elseif ~isempty(thisFieldName) &&...

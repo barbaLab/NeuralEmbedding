@@ -2,7 +2,7 @@ function [Dout,TrialTime,nUnits,nTrial,Condition,Area,Dishomogeneous] = Double(D
 % function [Dout,TrialTime,nUnits,nTrial,Condition,Area] = Double(Din,opts)
 %
 % Convert a double array to the standard format for the NeuralEmbedding
-% class.
+% class. Double input is interpreted as MUA spectral estimation activity. 
 %
 % Input:
 %   Din (double): Input data in the format nUnits x TrialL x nTrials
@@ -22,7 +22,7 @@ function [Dout,TrialTime,nUnits,nTrial,Condition,Area,Dishomogeneous] = Double(D
 optsDefault = structfun(@isempty,opts,'UniformOutput',false);
 
 % TODO check for fs
-if ~optsDefault.fs
+if optsDefault.fs
     error('fs field is missing in opts structure.\nIt is required when converting data from double format.\nPlease input the sampling frequency (in Hz) in opts.fs.');
 end
 
