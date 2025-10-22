@@ -16,11 +16,11 @@ function [E ,C ,VarExplained] = reduce(D,dims)
         % For each condition, store the reduced version of each data vector
         index = 0;
         for i=1:length(D)
-            D(i).data = sc(index + (1:size(D(i).data,2)),1:dims)';
+            D(i).data = sc(index + (1:size(D(i).data,2)),:)';
             index = index + size(D(i).data,2);
         end
         [E{:}] = deal(D.data);
-        C{1} = u(:,1:dims);
-        VarExplained{1} = cumsum(lat) ./ sum(lat);  % eigenvalues
+        C{1} = u;
+        VarExplained{1} = cumsum(lat(dims)) ./ sum(lat);  % eigenvalues
 
     end

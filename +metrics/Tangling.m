@@ -149,7 +149,8 @@ g.draw;
 %% Write everything to table
 hasDeficit = (max(succ(:,1:3),[],2)-min(succ(:,4:5),[],2) ) >.3;
 hasDeficit(6) = true;
-t = table(th(:),mixedConds(T(:))',an(:),area(:),succ(:),Deficit(:),Deficit_(:),hasDeficit(an(:)),'VariableNames',{'tangl','block','animal','area','score','deficit','deficitB','isLesioned'});
+t = table(th(:),mixedConds(T(:))',an(:),area(:),succ(:),Deficit(:),Deficit_(:),hasDeficit(an(:)), ...
+    'VariableNames',{'tangl','block','animal','area','score','deficit','deficitB','isLesioned'});
 writetable(t,'C:\Users\Fede\Documents\MATLAB\R03 figures\Results\Tangl\Tangl.GPFA.csv')
 %% New tanglind metric
 function [theta ] = newTangling(data,type,nsec)

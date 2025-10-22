@@ -12,32 +12,27 @@ function flag = computeMetrics(obj,type)
     flag = true;
 
     switch deblank(type)
-        case {'arclength','Arclength','arc','Arc'}
+        case {'arclength','Arclength','arc','Arc','ArcLength','length','Length','len','Len'}
             type = "Arclength";
             parNames = [""];
-            pars = obj.assignMPars(parNames,type);
-            try
-                M = ...
-                    metrics.(type)(obj.E,pars);
-            catch er
-                flag = false;
-                return;
-            end
+
         case {'Alignment','alignment','align','Align'}
             type = "Alignment";
             parNames = [""];
-            pars = obj.assignMPars(parNames,type);
-            try
-                M = ...
-                    metrics.(type)(obj.E,pars);
-            catch er
-                flag = false;
-                return;
-            end
         otherwise
-            M = deal(nan);
+            error("Specific metric not found.")
     end
 
+    % compute metrics
+    try
+        fprintf(1,"\nCopmuting %s for %s.%s",type,obj.Animal,obj.Session);
+        pars = obj.assignMPars(parNames,type);
+        M = ...
+            metrics.(type)(obj.E,pars);
+    catch er
+        flag = false;
+        return;
+    end
 
     % Common operations on all metrics
     Mstr = obj.initMstruct(M,type);

@@ -1,4 +1,7 @@
-function [E,ProjMatrix,VarExplained]= GPFA(D,pars)
+function [E,ProjMatrix,VarExplained]= GPFA(D,pars,W, VarExplained)
+if nargin < 3
+    [W, VarExplained] = deal([]);
+end
 
 seqTest = pars.seqTest;
 nTrial = length(D);
@@ -21,8 +24,16 @@ for id=1:numel(D)
 end
 [D_.T] = deal(pars.TrialL{:});
 otherArgs = [fieldnames(pars) struct2cell(pars)]';
-[E,ProjMatrix,VarExplained] = embedding.GPFA.reduce(D_(~seqTest),D_(seqTest),...
-    'xDim',pars.numPC,'verbose',false,'binWidth',pars.subsampling,...
-    otherArgs{:});
+
+if pars.projectOnly
+    E = embedding.GPFA.project(D,W);
+    ProjMatrix = W;
+else
+    [E,ProjMatrix,VarExplained] = embedding.GPFA.reduce(D_(~seqTest),D_(seqTest),...
+        'xDim',pars.numPC,'verbose',false,'binWidth',pars.subsampling,...
+        otherArgs{:});
+    ProjMatrix{1} = ProjMatrix{1}';
+end
+% VarExplained = VarExplained;
     
 end
