@@ -87,6 +87,8 @@ classdef NeuralEmbedding < handle & ...
         nTrial double
         nArea  double
         nCondition double
+
+        currentEmbeddingMethod string = ""
     end
 
     properties (Access = private)
@@ -101,7 +103,8 @@ classdef NeuralEmbedding < handle & ...
         M_ = ...
             struct('type',[],'date',[],'condition',...                      % Metrics struct storing quality matrics.
             [],'data',[],'Area',[]);
-
+        Evts_ = ...
+            struct('Name',[],'Area',[],'Idx',[]);
         W_ cell                                                            % projection matrix
         Winv_ cell                                                         % inverse projection matrix
         mu  double = 0                                                     % per unit mean 
@@ -109,7 +112,6 @@ classdef NeuralEmbedding < handle & ...
         subsampling double = 1                                             % subsampling, it is updated after binning
         homogeneous logical = false                                        % flag for trial homogenuity. If all trials all equally long, this is 0
 
-        currentEmbeddingMethod string = ""
         VarExplained_ double                                               % cell storing variance explained values
         numPC double = 6
     end
@@ -239,6 +241,18 @@ classdef NeuralEmbedding < handle & ...
 
             % Z-score the data
             obj.zscoreData();
+        end
+    
+        function addEvents(obj,evts)
+
+            CorrectedEvts = evts(:);
+            ff = fieldnames(evts);
+            if not(all(ismember(ff,["Name","Area","Idx"])))
+                error("Event structure must contain the fields Namr, Area, and Idx");
+            end
+
+            obj.Evts_ = [obj.Evts_;CorrectedEvts]
+
         end
     end
 
@@ -852,10 +866,6 @@ classdef NeuralEmbedding < handle & ...
     %% Compute embeddings
     methods (Access=public)
          flag = findEmbedding(obj,type,Area)
-
-         function flag = addEvents(obj,evt)
-             % TODO add behavioural events to be stored in a trial by trial base
-         end
     end
 
     %% Compute manifold metrices
@@ -865,20 +875,25 @@ classdef NeuralEmbedding < handle & ...
 
     %% Plot data
     methods
-        function plot3(obj)
+        function plot3(obj,maxT)
+            if nargin < 2
+                maxT = 40;
+            end
+
             if not(isscalar(obj))
-                arrayfun(@(o)o.plot3,obj);
+                arrayfun(@(o)o.plot3(maxT),obj);
                 return;
             end
             reducedE = cellfun(@(x)[x(1:3,:) nan(3,1)], ...
                 obj.E, ...
                 'UniformOutput',false);            
-            t = cellfun(@(t)[t' nan], ...
+            t = cellfun(@(t)[t(:)' nan], ...
                 obj.TrialTime, ...
                 'UniformOutput',false);
             nT = sum(obj.cMask);
-            MaxLines = min(nT,80);
-            idx = randperm(nT,MaxLines);
+            MaxLines = min(nT,maxT);
+            % idx = randperm(nT,MaxLines);
+            idx = findClosestN(reducedE,MaxLines);
             reducedE = [reducedE{idx}];
             t = [t{idx}];
             figure;
@@ -892,9 +907,28 @@ classdef NeuralEmbedding < handle & ...
             title(obj.Animal + " " +obj.Session)
             xlabel('Dimension 1');ylabel('Dimension 2');zlabel('Dimension 3');
             colorbar
+
+            function idx = findClosestN(traj,N)
+                m = median(cat(3,traj{:}),3);
+                % [dist,idx] = sort(cellfun(@(l) ...
+                %     norm(l(:,1:end-1) - m(:,1:end-1)),traj));
+                [dist,idx] = sort( ...
+                    cellfun(@(l) ...
+                        max(sum(l(:,1:end-1) - m(:,1:end-1),2)), ...
+                    traj) ...
+                              );
+                idx = idx(1:N);
+            end
+
+            
         end
 
         function peth(obj)
+            if not(isscalar(obj))
+                arrayfun(@(o)o.peth,obj);
+                return;
+            end
+
             if not(obj.homogeneous)
                 warning("PETH is not available for Dishomogeneous data.%sAborting.",newline);
                 return;
@@ -981,6 +1015,63 @@ classdef NeuralEmbedding < handle & ...
             obj.cMask = BakCond;
             obj.aMask = BakArea;
         end
+  
+        function animate3(obj,maxT)
+            if nargin < 2
+                maxT = 40;
+            end
+
+            if not(isscalar(obj))
+                warning("Array object ont yet supported.")
+                return;
+            end
+            reducedE = cellfun(@(x)[x(1:3,:) nan(3,1)], ...
+                obj.E, ...
+                'UniformOutput',false);
+            t = cellfun(@(t)[t(:)' nan], ...
+                obj.TrialTime, ...
+                'UniformOutput',false);
+            nT = sum(obj.cMask);
+            MaxLines = min(nT,maxT);
+            % idx = randperm(nT,MaxLines);
+            idx = findClosestN(reducedE,MaxLines);
+            reducedE = reducedE(idx);
+            AxLimits = [min([reducedE{:}],[],2),max([reducedE{:}],[],2)];
+
+            t = t(idx);
+            ax = axes(figure);
+            ax.set("XLim", AxLimits(1,:),"YLim",AxLimits(2,:),"ZLim",AxLimits(3,:));
+            for tr = 1:numel(t)
+                anl(tr) = animatedline(ax,reducedE{tr}(1,1),reducedE{tr}(2,1),reducedE{tr}(3,1));
+                anl(tr).MaximumNumPoints = 50;
+            end
+
+            for tt = 1:numel(t{1})
+                for tr = 1:numel(t)
+                    anl(tr).addpoints(reducedE{tr}(1,tt),reducedE{tr}(2,tt),reducedE{tr}(3,tt));
+                    % title(sprintf("%d",t(tt)));
+                    pause(1/1500);
+                end
+            end
+            % title(obj.Animal + " " +obj.Session)
+            % xlabel('Dimension 1');ylabel('Dimension 2');zlabel('Dimension 3');
+            % colorbar
+
+            function idx = findClosestN(traj,N)
+                m = median(cat(3,traj{:}),3);
+                % [dist,idx] = sort(cellfun(@(l) ...
+                %     norm(l(:,1:end-1) - m(:,1:end-1)),traj));
+                [dist,idx] = sort( ...
+                    cellfun(@(l) ...
+                    max(sum(l(:,1:end-1) - m(:,1:end-1),2)), ...
+                    traj) ...
+                    );
+                idx = idx(1:N);
+            end
+
+            
+        end
+
     end
 
     %% Class data preview

@@ -44,7 +44,7 @@ switch deblank(type)
         parNames = ["subsampling","numPC","TrialL"];
         % Get the parameters for this algorithm
         pars = obj.assignEPars(parNames,type);
-        pars.numPC = min(sum(obj.aMask),30);
+        pars.numPC = obj.NumPC;
         pars.projectOnly = projectOnly;
         try
             % GPFA does not need presmoothing. It gets as input P instead of S
