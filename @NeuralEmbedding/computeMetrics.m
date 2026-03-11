@@ -19,6 +19,10 @@ function flag = computeMetrics(obj,type)
         case {'Alignment','alignment','align','Align'}
             type = "Alignment";
             parNames = [""];
+
+        case {'DPrime','dprime','dPrime','d_prime','d-prime'}
+            type = "DPrime";
+            parNames = ["baseline_idx","signal_idx"];
         otherwise
             error("Specific metric not found.")
     end
