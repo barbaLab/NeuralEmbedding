@@ -69,6 +69,8 @@ classdef NeuralEmbedding < handle & ...
 
         % Metrics computation
         appendM                 = false
+        baseline_idx            = []
+        signal_idx              = []
 
         % Metadata
         Meta                    = struct("AnName","","ExpGroup","");
