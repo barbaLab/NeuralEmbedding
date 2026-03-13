@@ -41,7 +41,7 @@ std_s = std(signal,    0, 2);
 % Pooled standard deviation: sqrt( (sigma_b^2 + sigma_s^2) / 2 )
 pooled_std = sqrt(0.5 .* (std_b.^2 + std_s.^2));
 
-dp = (mu_s - mu_b) ./ pooled_std;
+dp = abs(mu_s - mu_b) ./ pooled_std;
 
 % Return as 1 x nDims row vector
 dp = dp';

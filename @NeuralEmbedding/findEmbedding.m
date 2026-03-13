@@ -16,7 +16,6 @@ if nargin<3
     projectOnly = false;
 end
 
-
 % switch through the different algorithms
 switch deblank(type)
     case {'SmoothPCA','PCA','pca'}
@@ -66,20 +65,19 @@ switch deblank(type)
         try
             % Initialize the data for CCA
             D = cell(obj.nTrial,obj.nArea);
-            a = 1;
-            for aa = obj.UArea(1:end-1)
+            for aa = 1:obj.nArea
                 % Set the area mask to the current area
-                obj.aMask = aa;
+                obj.aMask = obj.UArea(aa);
                 % Get the data for the current area
-                D(:,a) = obj.S;
+                D(:,aa) = obj.S;
                 % Increment the area counter
-                a = a + 1;
             end
             % Set the area mask to all areas
             obj.aMask = obj.UArea(1:end-1);
             % Compute the CCA
-            [E,W,VarExplained] = ...
+            [E,W,CanonCorrelation] = ...
                 embedding.CCA(D,pars);
+            Winv = cellfun(@pinv,W,'UniformOutput',false);
         catch er
             % If the algorithm fails, set flag to false and rethrow the error
             flag = false;
@@ -177,6 +175,12 @@ obj.E_(cmask,amask) = cellfun(@(x)NeuralEmbedding.smoother(x,...
             E_s,'UniformOutput',false);
 obj.W_(amask) = W;
 obj.Winv_(amask) = Winv;
-obj.VarExplained_(amask) = VarExplained{1};
+if exist("VarExplained","var")
+    obj.VarExplained_(amask) = VarExplained{:};
+end
+if exist("CanonCorrelation","var")
+    obj.CanonCorrelation_(1:obj.nArea-1) = CanonCorrelation;
+end
+
 end
 

@@ -32,8 +32,8 @@ function [E,C,Corr] = reduce(D,pars)
         for jj = 1:pars.nArea
             index = 0;
             for ii = 1:pars.nTrial
-                E{ii,jj} = E_{jj}(index + (1:pars.TrialL),1:dims)';
-                index = index + pars.TrialL;
+                E{ii,jj} = E_{jj}(index + (1:pars.TrialL{ii}),1:dims)';
+                index = index + pars.TrialL{ii};
             end
         end
 

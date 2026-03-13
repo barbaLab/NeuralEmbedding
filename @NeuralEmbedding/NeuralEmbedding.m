@@ -30,7 +30,8 @@ classdef NeuralEmbedding < handle & ...
         PostKern
         BinWidth
 
-        VarExplained                                                        % (Double) Variance explained by each embedded dimension
+        VarExplained                                                        %(Double) Variance explained by each embedded dimension
+        CanonCorr                                                           %(Cell) Canonical correlation (where relevant)
         NumPC                   
 
     end
@@ -115,6 +116,7 @@ classdef NeuralEmbedding < handle & ...
         homogeneous logical = false                                        % flag for trial homogenuity. If all trials all equally long, this is 0
 
         VarExplained_ double                                               % cell storing variance explained values
+        CanonCorrelation_ cell                                             % cell storing canonical correlation iof applicable
         numPC double = 6
     end
 
@@ -606,7 +608,26 @@ classdef NeuralEmbedding < handle & ...
             end
             value = obj.VarExplained_(amask);
         end
-   
+        function value = get.CanonCorr(obj)
+            amask = ismember(obj.UArea,obj.aMask_);
+            if isempty(obj.CanonCorrelation_) || ...
+                    length(obj.CanonCorrelation_) < find(amask,1,'last')
+                % TODO, not sure if makes sense
+            end
+            nMask = numel(obj.aMask_);
+            value_tmp = cell(1,(nMask-1)*(nMask-2)/2);
+            str = repmat("",(nMask-1)*(nMask-2)/2);
+            idx = 1;
+            for ii = 1:nMask-1
+                for jj = ii+1:nMask
+                str(idx) = obj.aMask_(ii)+"_"+obj.aMask_(jj);
+                value_tmp{idx} = obj.CanonCorrelation_(ii);
+                idx = idx + 1;
+                end
+            end
+            value = cell2struct(value_tmp,str);
+        end
+
         function value = get.NumPC(obj)
             value = obj.numPC;
         end
@@ -861,6 +882,10 @@ classdef NeuralEmbedding < handle & ...
                 'condition',obj.cMask_,...
                 'data',data,...
                 'Area',obj.aMask_);
+
+            if strcmp(type,'DPrime')
+                str.Area = strjoin(str.Area,"∪");
+            end
         end
 
     end
@@ -886,7 +911,7 @@ classdef NeuralEmbedding < handle & ...
                 arrayfun(@(o)o.plot3(maxT),obj);
                 return;
             end
-            reducedE = cellfun(@(x)[x(1:3,:) nan(3,1)], ...
+            reducedE_ = cellfun(@(x)[x(1:3,:) nan(3,1)], ...
                 obj.E, ...
                 'UniformOutput',false);            
             t = cellfun(@(t)[t(:)' nan], ...
@@ -895,20 +920,22 @@ classdef NeuralEmbedding < handle & ...
             nT = sum(obj.cMask);
             MaxLines = min(nT,maxT);
             % idx = randperm(nT,MaxLines);
-            idx = findClosestN(reducedE,MaxLines);
-            reducedE = [reducedE{idx}];
+            idx = findClosestN(reducedE_,MaxLines);
             t = [t{idx}];
-            figure;
-            surface([reducedE(1,:);reducedE(1,:)], ...
-                 [reducedE(2,:);reducedE(2,:)], ...
-                 [reducedE(3,:);reducedE(3,:)], ...
-                 [t;t], ...
-                 'facecol','no',...
-                 'edgecol','interp',...
-                 'linew',1)
-            title(obj.Animal + " " +obj.Session)
-            xlabel('Dimension 1');ylabel('Dimension 2');zlabel('Dimension 3');
-            colorbar
+            for aa = 1:size(reducedE_,2)
+                reducedE = [reducedE_{idx,aa}];
+                figure;
+                surface([reducedE(1,:);reducedE(1,:)], ...
+                    [reducedE(2,:);reducedE(2,:)], ...
+                    [reducedE(3,:);reducedE(3,:)], ...
+                    [t;t], ...
+                    'facecol','no',...
+                    'edgecol','interp',...
+                    'linew',1)
+                title(obj.Animal + " " +obj.Session + " " + obj.aMask_(aa))
+                xlabel('Dimension 1');ylabel('Dimension 2');zlabel('Dimension 3');
+                colorbar
+            end
 
             function idx = findClosestN(traj,N)
                 m = median(cat(3,traj{:}),3);
