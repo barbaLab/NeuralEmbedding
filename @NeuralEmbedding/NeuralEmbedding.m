@@ -16,7 +16,9 @@ classdef NeuralEmbedding < handle & ...
         TrialL      int64                                                   % Trial length in bins
         
         UArea
-        UConditions                                                          % (String) String array listing all conditinos
+        UConditions                                                          % (String) String array listing all conditions
+
+        Events  struct                                                       % Behavioral events struct array (fields: Ts, name, trial, data)
     end
 
     properties(Dependent,Access=public)
@@ -106,8 +108,7 @@ classdef NeuralEmbedding < handle & ...
         M_ = ...
             struct('type',[],'date',[],'condition',...                      % Metrics struct storing quality matrics.
             [],'data',[],'Area',[]);
-        Evts_ = ...
-            struct('Name',[],'Area',[],'Idx',[]);
+        Events_ = struct('Ts',{},'name',{},'trial',{},'data',{});          % Events struct array (Ts, name, trial, data)
         W_ cell                                                            % projection matrix
         Winv_ cell                                                         % inverse projection matrix
         mu  double = 0                                                     % per unit mean 
@@ -248,15 +249,47 @@ classdef NeuralEmbedding < handle & ...
         end
     
         function addEvents(obj,evts)
-
-            CorrectedEvts = evts(:);
-            ff = fieldnames(evts);
-            if not(all(ismember(ff,["Name","Area","Idx"])))
-                error("Event structure must contain the fields Namr, Area, and Idx");
+        % ADDEVENTS Add behavioral events to the NeuralEmbedding object.
+        %   ADDEVENTS(OBJ, EVTS) adds events stored in the struct array EVTS to
+        %   the object. EVTS must be a struct array with the following fields:
+        %     Ts    - (double) timestamp relative to trial start (0 = trial alignment)
+        %     name  - (string or char) event name/label
+        %     trial - (double) trial index (1-based)
+        %     data  - (optional) any additional data (reserved for future use)
+        %
+        %   To convert events with absolute timestamps to the required relative
+        %   format, use the static utility:
+        %     evts = NeuralEmbedding.absoluteToRelativeEvents(evts, trialStartTimes)
+        %
+        %   See also NeuralEmbedding.absoluteToRelativeEvents
+            arguments
+                obj  NeuralEmbedding
+                evts struct
             end
 
-            obj.Evts_ = [obj.Evts_;CorrectedEvts]
+            evts = evts(:);  % normalise to column vector
 
+            ff = fieldnames(evts);
+            requiredFields = {'Ts','name','trial'};
+            if ~all(ismember(requiredFields, ff))
+                error('NeuralEmbedding:addEvents:invalidFields', ...
+                    ['Event structure must contain the fields: ' ...
+                    strjoin(requiredFields,', ') '.']);
+            end
+
+            % Add optional data field if absent
+            if ~ismember('data', ff)
+                [evts.data] = deal([]);
+            end
+
+            % Validate trial indices
+            trialIdx = [evts.trial];
+            if any(trialIdx < 1) || any(trialIdx > obj.nTrial)
+                error('NeuralEmbedding:addEvents:invalidTrial', ...
+                    'Trial indices must be integers in [1, %d].', obj.nTrial);
+            end
+
+            obj.Events_ = [obj.Events_; evts(:)];
         end
     end
 
@@ -377,6 +410,11 @@ classdef NeuralEmbedding < handle & ...
         % Returns unique experimental conditions.
         function value = get.UArea(obj)
             value = [string(unique(obj.Area(not(ismissing(obj.Area))))); "AllNeurons"];
+        end
+
+        % Returns the events struct array.
+        function value = get.Events(obj)
+            value = obj.Events_;
         end
        
         % Returns updated TrialTime wrt subsampling and tMask.
@@ -903,6 +941,15 @@ classdef NeuralEmbedding < handle & ...
     %% Plot data
     methods
         function plot3(obj,maxT)
+        % PLOT3  Plot embedded neural trajectories in the first three dimensions.
+        %   PLOT3(OBJ) plots up to 40 trials (default). Trials are coloured by
+        %   time and selected as the closest to the median trajectory.
+        %   If events have been added via addEvents, they are overlaid as
+        %   markers on the trajectories and a legend is shown.
+        %
+        %   PLOT3(OBJ, MAXT) uses at most MAXT trajectories.
+        %
+        %   See also NeuralEmbedding.addEvents
             if nargin < 2
                 maxT = 40;
             end
@@ -911,8 +958,12 @@ classdef NeuralEmbedding < handle & ...
                 arrayfun(@(o)o.plot3(maxT),obj);
                 return;
             end
+
+            % Cache embedded data (filtered by current cMask/aMask)
+            E_ = obj.E;
+
             reducedE_ = cellfun(@(x)[x(1:3,:) nan(3,1)], ...
-                obj.E, ...
+                E_, ...
                 'UniformOutput',false);            
             t = cellfun(@(t)[t(:)' nan], ...
                 obj.TrialTime, ...
@@ -920,28 +971,98 @@ classdef NeuralEmbedding < handle & ...
             nT = sum(obj.cMask);
             MaxLines = min(nT,maxT);
             % idx = randperm(nT,MaxLines);
-            idx = findClosestN(reducedE_,MaxLines);
-            t = [t{idx}];
+            closestIdx = findClosestN(reducedE_,MaxLines);
+
+            % Map filtered-trial indices to absolute trial indices for event lookup
+            cMaskIdx = find(obj.cMask(:));
+            selectedTrialIdx = cMaskIdx(closestIdx);
+
+            t = [t{closestIdx}];
+
+            % Prepare event-overlay data (unique names, colours, markers)
+            evts = obj.Events_;
+            hasEvents = ~isempty(evts);
+            if hasEvents
+                evtNames  = string({evts.name});
+                uEvtNames = unique(evtNames, 'stable');
+                nEvtTypes = numel(uEvtNames);
+                evtMarkers = {'o','s','^','v','d','p','h','*','+','x'};
+                evtColors  = lines(nEvtTypes);
+            end
+
             for aa = 1:size(reducedE_,2)
-                reducedE = [reducedE_{idx,aa}];
-                figure;
-                surface([reducedE(1,:);reducedE(1,:)], ...
+                reducedE = [reducedE_{closestIdx,aa}];
+                fig = figure;
+                ax  = axes(fig);
+                surface(ax, [reducedE(1,:);reducedE(1,:)], ...
                     [reducedE(2,:);reducedE(2,:)], ...
                     [reducedE(3,:);reducedE(3,:)], ...
                     [t;t], ...
                     'facecol','no',...
                     'edgecol','interp',...
                     'linew',1)
-                title(obj.Animal + " " +obj.Session + " " + obj.aMask_(aa))
-                xlabel('Dimension 1');ylabel('Dimension 2');zlabel('Dimension 3');
-                colorbar
+
+                % Overlay events as 3-D markers
+                if hasEvents
+                    hold(ax,'on');
+                    legendHandles = gobjects(1, nEvtTypes);
+                    nValid = 0;
+                    for en = 1:nEvtTypes
+                        thisName  = uEvtNames(en);
+                        nameIdx   = evtNames == thisName;
+                        thisEvts  = evts(nameIdx);
+                        thisTrIdx = [thisEvts.trial];
+
+                        xPts = zeros(1,0);
+                        yPts = zeros(1,0);
+                        zPts = zeros(1,0);
+                        for tr_i = 1:numel(closestIdx)
+                            trAbsIdx  = selectedTrialIdx(tr_i);
+                            trEvtMask = thisTrIdx == trAbsIdx;
+                            if ~any(trEvtMask), continue; end
+
+                            trialT = obj.TrialTime{closestIdx(tr_i)};
+                            trialE = E_{closestIdx(tr_i), aa};
+                            if isempty(trialE) || size(trialE,1) < 3
+                                continue;
+                            end
+                            trialE3 = trialE(1:3, :);
+
+                            for ev = reshape(find(trEvtMask),1,[])
+                                [~, tIdx] = min(abs(trialT - thisEvts(ev).Ts));
+                                xPts(end+1) = trialE3(1, tIdx); %#ok<AGROW>
+                                yPts(end+1) = trialE3(2, tIdx); %#ok<AGROW>
+                                zPts(end+1) = trialE3(3, tIdx); %#ok<AGROW>
+                            end
+                        end
+
+                        if ~isempty(xPts)
+                            mk = evtMarkers{mod(en-1, numel(evtMarkers)) + 1};
+                            nValid = nValid + 1;
+                            legendHandles(nValid) = scatter3(ax, xPts, yPts, zPts, ...
+                                50, evtColors(en,:), mk, 'filled', ...
+                                'DisplayName', thisName, ...
+                                'LineWidth', 1.5);
+                        end
+                    end
+
+                    if nValid > 0
+                        legend(ax, legendHandles(1:nValid));
+                    end
+                end
+
+                title(ax, obj.Animal + " " + obj.Session + " " + obj.aMask_(aa))
+                xlabel(ax, 'Dimension 1');
+                ylabel(ax, 'Dimension 2');
+                zlabel(ax, 'Dimension 3');
+                colorbar(ax)
             end
 
             function idx = findClosestN(traj,N)
                 m = median(cat(3,traj{:}),3);
                 % [dist,idx] = sort(cellfun(@(l) ...
                 %     norm(l(:,1:end-1) - m(:,1:end-1)),traj));
-                [dist,idx] = sort( ...
+                [~,idx] = sort( ...
                     cellfun(@(l) ...
                         max(sum(l(:,1:end-1) - m(:,1:end-1),2)), ...
                     traj) ...
@@ -951,6 +1072,7 @@ classdef NeuralEmbedding < handle & ...
 
             
         end
+
 
         function peth(obj)
             if not(isscalar(obj))
@@ -1113,6 +1235,7 @@ classdef NeuralEmbedding < handle & ...
                     'Session',obj.Session,...
                     'Units',obj.nUnits,...
                     'Trials',obj.nTrial,...
+                    'Events',numel(obj.Events_),...
                     'Trial_names',obj.UConditions,...
                     'Areas',obj.UArea,...
                     'Area_mask',obj.aMask_,...
@@ -1135,6 +1258,57 @@ classdef NeuralEmbedding < handle & ...
     end
     %% Usefull generic methods
     methods(Static)
+        function evts = absoluteToRelativeEvents(evts, trialStartTimes)
+        % ABSOLUTETORELATIVEEVENTS Convert event timestamps from absolute to relative time.
+        %   EVTS = ABSOLUTETORELATIVEEVENTS(EVTS, TRIALSTARTTIMES) subtracts
+        %   each event's trial-start time from its Ts field, so that the
+        %   returned struct has Ts values relative to the beginning of the
+        %   trial (0 = trial alignment / trial start).
+        %
+        %   Inputs:
+        %     evts            - struct array with fields Ts (absolute recording time),
+        %                       name, trial, and optionally data.
+        %     trialStartTimes - (1 x nTrials) or (nTrials x 1) vector of trial-start
+        %                       timestamps in the same absolute time base as evts.Ts.
+        %
+        %   Output:
+        %     evts - same struct array with Ts converted to relative time.
+        %
+        %   Example:
+        %     % Trial starts at t = 10, 20, 30 seconds
+        %     trialStarts = [10 20 30];
+        %     evt.Ts    = 22;   % absolute timestamp
+        %     evt.name  = "reward";
+        %     evt.trial = 2;    % belongs to trial 2 (started at t=20)
+        %     evt.data  = [];
+        %     evt = NeuralEmbedding.absoluteToRelativeEvents(evt, trialStarts);
+        %     % evt.Ts is now 2 (= 22 - 20)
+        %
+        %   See also NeuralEmbedding.addEvents
+            arguments
+                evts            struct
+                trialStartTimes (1,:) double
+            end
+
+            evts = evts(:);  % normalise to column vector
+
+            ff = fieldnames(evts);
+            if ~ismember('Ts', ff) || ~ismember('trial', ff)
+                error('NeuralEmbedding:absoluteToRelativeEvents:invalidFields', ...
+                    'Event structure must contain at least the fields: Ts, trial.');
+            end
+
+            nTrials = numel(trialStartTimes);
+            for i = 1:numel(evts)
+                trial = evts(i).trial;
+                if trial < 1 || trial > nTrials
+                    error('NeuralEmbedding:absoluteToRelativeEvents:invalidTrial', ...
+                        'Trial index %d is out of range [1, %d].', trial, nTrials);
+                end
+                evts(i).Ts = evts(i).Ts - trialStartTimes(trial);
+            end
+        end
+
         % Gaussian kernel smoothing of data across time
         function Xs = smoother(X,kern,causal,gpu)
         %% SMOOTHER Smooth the data using a Gaussian kernel
