@@ -1259,7 +1259,7 @@ classdef NeuralEmbedding < handle & ...
     end
     %% Usefull generic methods
     methods(Static)
-        function evts = absoluteToRelativeEvents(evts, varargin)
+        function evts = absoluteToRelativeEvents(evts, namevalue)
         % ABSOLUTETORELATIVEEVENTS Convert event timestamps from absolute to relative time.
         %   EVTS = ABSOLUTETORELATIVEEVENTS(EVTS, 'trialStartReference', REF) subtracts
         %   each event's trial-start time from its Ts field, so that the
@@ -1298,21 +1298,17 @@ classdef NeuralEmbedding < handle & ...
         %
         %   See also NeuralEmbedding.addEvents
             arguments
-                evts            struct
+                evts                                  struct
+                namevalue.inferTrialFromBounds  {mustBeNumArrayOrString}
+                namevalue.trialStartReference   (1,1) logical = false
             end
 
             evts = evts(:);  % normalise to column vector
 
             ff = fieldnames(evts);
-            p = inputParser();
-            p.FunctionName = 'NeuralEmbedding.absoluteToRelativeEvents';
-            addParameter(p,'trialStartReference',[], ...
-                @(x) isnumeric(x) || ischar(x) || (isstring(x) && isscalar(x)));
-            addParameter(p,'inferTrialFromBounds',false, ...
-                @(x) islogical(x) && isscalar(x));
-            parse(p,varargin{:});
-            trialStartReference = p.Results.trialStartReference;
-            inferTrialFromBounds = p.Results.inferTrialFromBounds;
+
+            trialStartReference = namevalue.trialStartReference;
+            inferTrialFromBounds = namevalue.inferTrialFromBounds;
 
             if ~ismember('Ts', ff)
                 evts = evts([]);
@@ -1342,13 +1338,28 @@ classdef NeuralEmbedding < handle & ...
                 isTrialEnd = strcmpi(evtNames,'trialend');
                 if any(isTrialStart) && any(isTrialEnd)
                     tStart = [evts(isTrialStart).Ts];
-                    tEnd = [evts(isTrialEnd).Ts];
+                    tEnd   = [evts(isTrialEnd).Ts];
+
+                    % Handle simple boundary mismatches:
+                    % 1) unmatched end at the beginning
+                    while ~isempty(tStart) && ~isempty(tEnd) && tEnd(1) < tStart(1)
+                        tEnd(1) = [];
+                    end
+
+                    % 2) unmatched start at the end
+                    while ~isempty(tStart) && ~isempty(tEnd) && tStart(end) > tEnd(end)
+                        tStart(end) = [];
+                    end
+
+                    % Pair remaining starts/ends
                     nBounds = min(numel(tStart), numel(tEnd));
                     tStart = tStart(1:nBounds);
-                    tEnd = tEnd(1:nBounds);
+                    tEnd   = tEnd(1:nBounds);
+
+                    % Keep only properly ordered pairs
                     validBounds = tEnd >= tStart;
                     tStart = tStart(validBounds);
-                    tEnd = tEnd(validBounds);
+                    tEnd   = tEnd(validBounds);
 
                     if ~isempty(tStart)
                         for i = 1:numel(evts)
@@ -1421,6 +1432,16 @@ classdef NeuralEmbedding < handle & ...
                         'Event trial index is invalid or out of range [1, %d].', nTrials);
                 end
                 evts(i).Ts = evts(i).Ts - trialStartTimes(trial);
+            end
+
+
+        end
+
+        function mustBeNumArrayOrString(x)
+            if not(isnumeric(x) || ischar(x) || (isstring(x) && isscalar(x)))
+                eidType = 'mustBeNumArrayOrString:notNumArrayOrString';
+                msgType = 'Input must be a numeric array or a scalar string (or char vector).';
+                error(eidType,msgType);
             end
         end
 
