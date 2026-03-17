@@ -1406,15 +1406,10 @@ classdef NeuralEmbedding < handle & ...
                     idx = find(isRefEvent & trialIdx == trial, 1, 'first');
                     if isempty(idx)
                         error('NeuralEmbedding:absoluteToRelativeEvents:missingTrialStartEvent', ...
-                            'No event named %s found for trial %d.', refName, trial);
+                            'No event named %s found for trial %d.', char(refName), trial);
                     end
                     trialStartTimes(trial) = evts(idx).Ts;
                 end
-            end
-
-            if ~ismember('trial', ff)
-                error('NeuralEmbedding:absoluteToRelativeEvents:invalidFields', ...
-                    'Event structure must contain at least the fields: Ts, trial.');
             end
 
             nTrials = numel(trialStartTimes);
@@ -1423,7 +1418,7 @@ classdef NeuralEmbedding < handle & ...
                 if ~isnumeric(trial) || ~isscalar(trial) || isempty(trial) || ...
                         ~isfinite(trial) || trial < 1 || mod(trial,1) ~= 0 || trial > nTrials
                     error('NeuralEmbedding:absoluteToRelativeEvents:invalidTrial', ...
-                        'Trial index %d is out of range [1, %d].', trial, nTrials);
+                        'Event trial index is invalid or out of range [1, %d].', nTrials);
                 end
                 evts(i).Ts = evts(i).Ts - trialStartTimes(trial);
             end
@@ -1718,4 +1713,3 @@ classdef NeuralEmbedding < handle & ...
         end
     end
 end
-
