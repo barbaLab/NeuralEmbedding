@@ -179,8 +179,8 @@ classdef NeuralEmbedding < handle & ...
             obj.nCondition = numel(unique(Condition));
             % Pre-allocate the embedded data
             obj.E_  = cell(nTrial,1 + obj.nArea);
-            obj.W_  = cell(nTrial,1 + obj.nArea);
-            obj.Winv_  = cell(nTrial,1 + obj.nArea);
+            obj.W_  = cell(1,1 + obj.nArea);
+            obj.Winv_  = cell(1,1 + obj.nArea);
 
             % Store the original trial time
             obj.TrialTime_ = TrialTime(:);            
@@ -1564,6 +1564,8 @@ classdef NeuralEmbedding < handle & ...
         function obj = loadobj(obj)
             fprintf(1,'Loading %s.%s: loading data ',obj.Animal,obj.Session);
             obj.E_  = cell(obj.nTrial,1 + obj.nArea);
+            if isempty(obj.W_),obj.W_ = cell(1,1 + obj.nArea);end
+            if isempty(obj.Winv_),obj.Winv_ = cell(1,1 + obj.nArea);end
             fprintf(1,repmat('\b',1,13));
             fprintf(1,'preprocessing');
             performPrePro(obj);
