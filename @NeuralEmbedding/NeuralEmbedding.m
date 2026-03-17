@@ -259,7 +259,8 @@ classdef NeuralEmbedding < handle & ...
         %
         %   To convert events with absolute timestamps to the required relative
         %   format, use the static utility:
-        %     evts = NeuralEmbedding.absoluteToRelativeEvents(evts, trialStartTimes)
+        %     evts = NeuralEmbedding.absoluteToRelativeEvents(evts, ...
+        %         'trialStartReference', trialStartTimes)
         %
         %   See also NeuralEmbedding.absoluteToRelativeEvents
             arguments
@@ -1258,18 +1259,28 @@ classdef NeuralEmbedding < handle & ...
     end
     %% Usefull generic methods
     methods(Static)
-        function evts = absoluteToRelativeEvents(evts, trialStartTimes)
+        function evts = absoluteToRelativeEvents(evts, varargin)
         % ABSOLUTETORELATIVEEVENTS Convert event timestamps from absolute to relative time.
-        %   EVTS = ABSOLUTETORELATIVEEVENTS(EVTS, TRIALSTARTTIMES) subtracts
+        %   EVTS = ABSOLUTETORELATIVEEVENTS(EVTS, 'trialStartReference', REF) subtracts
         %   each event's trial-start time from its Ts field, so that the
         %   returned struct has Ts values relative to the beginning of the
         %   trial (0 = trial alignment / trial start).
         %
         %   Inputs:
         %     evts            - struct array with fields Ts (absolute recording time),
-        %                       name, trial, and optionally data.
-        %     trialStartTimes - (1 x nTrials) or (nTrials x 1) vector of trial-start
-        %                       timestamps in the same absolute time base as evts.Ts.
+        %                       name, trial, and optionally data. Events without a
+        %                       valid Ts are discarded.
+        %     trialStartReference - either:
+        %                       * numeric vector (1 x nTrials) or (nTrials x 1) with
+        %                         trial-start timestamps in the same absolute time base
+        %                         as evts.Ts, or
+        %                       * event name (char/string) present in evts. In this
+        %                         modality, for each trial the first event with that
+        %                         name is used as trial-start reference.
+        %     inferTrialFromBounds - logical flag (default false). If true, and both
+        %                       'trialstart' and 'trialend' events are present in evts,
+        %                       missing/invalid trial assignments are inferred by
+        %                       checking where each event Ts falls within those bounds.
         %
         %   Output:
         %     evts - same struct array with Ts converted to relative time.
@@ -1281,19 +1292,127 @@ classdef NeuralEmbedding < handle & ...
         %     evt.name  = "reward";
         %     evt.trial = 2;    % belongs to trial 2 (started at t=20)
         %     evt.data  = [];
-        %     evt = NeuralEmbedding.absoluteToRelativeEvents(evt, trialStarts);
+        %     evt = NeuralEmbedding.absoluteToRelativeEvents(evt, ...
+        %         'trialStartReference', trialStarts);
         %     % evt.Ts is now 2 (= 22 - 20)
         %
         %   See also NeuralEmbedding.addEvents
             arguments
                 evts            struct
-                trialStartTimes (1,:) double
             end
 
             evts = evts(:);  % normalise to column vector
 
             ff = fieldnames(evts);
-            if ~ismember('Ts', ff) || ~ismember('trial', ff)
+            p = inputParser();
+            p.FunctionName = 'NeuralEmbedding.absoluteToRelativeEvents';
+            addParameter(p,'trialStartReference',[], ...
+                @(x) isnumeric(x) || ischar(x) || (isstring(x) && isscalar(x)));
+            addParameter(p,'inferTrialFromBounds',false, ...
+                @(x) islogical(x) && isscalar(x));
+            parse(p,varargin{:});
+            trialStartReference = p.Results.trialStartReference;
+            inferTrialFromBounds = p.Results.inferTrialFromBounds;
+
+            if ~ismember('Ts', ff)
+                evts = evts([]);
+                return;
+            end
+
+            hasTs = arrayfun(@(e) isnumeric(e.Ts) && isscalar(e.Ts) && ...
+                ~isempty(e.Ts) && isfinite(e.Ts), evts);
+            evts = evts(hasTs);
+            if isempty(evts)
+                return;
+            end
+
+            ff = fieldnames(evts);
+            if ~ismember('trial', ff)
+                [evts.trial] = deal([]);
+                ff = fieldnames(evts);
+            end
+
+            if inferTrialFromBounds
+                if ~ismember('name', ff)
+                    error('NeuralEmbedding:absoluteToRelativeEvents:invalidFields', ...
+                        'Event structure must contain field name when inferTrialFromBounds is true.');
+                end
+                evtNames = string({evts.name});
+                isTrialStart = strcmpi(evtNames,'trialstart');
+                isTrialEnd = strcmpi(evtNames,'trialend');
+                if any(isTrialStart) && any(isTrialEnd)
+                    tStart = [evts(isTrialStart).Ts];
+                    tEnd = [evts(isTrialEnd).Ts];
+                    nBounds = min(numel(tStart), numel(tEnd));
+                    tStart = tStart(1:nBounds);
+                    tEnd = tEnd(1:nBounds);
+                    validBounds = tEnd >= tStart;
+                    tStart = tStart(validBounds);
+                    tEnd = tEnd(validBounds);
+
+                    if ~isempty(tStart)
+                        for i = 1:numel(evts)
+                            trial = evts(i).trial;
+                            hasValidTrial = isnumeric(trial) && isscalar(trial) && ...
+                                ~isempty(trial) && isfinite(trial) && ...
+                                trial >= 1 && mod(trial,1) == 0;
+                            if ~hasValidTrial
+                                match = find(evts(i).Ts >= tStart & evts(i).Ts <= tEnd, 1, 'first');
+                                if ~isempty(match)
+                                    evts(i).trial = match;
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+
+            if isempty(trialStartReference)
+                error('NeuralEmbedding:absoluteToRelativeEvents:missingTrialStartReference', ...
+                    ['Missing trial-start reference. Provide ', ...
+                    '''trialStartReference'' as numeric trial-start times ', ...
+                    'or as an event name present in evts.']);
+            end
+
+            if isnumeric(trialStartReference)
+                trialStartTimes = trialStartReference(:)';
+            else
+                if ~ismember('name', ff)
+                    error('NeuralEmbedding:absoluteToRelativeEvents:invalidFields', ...
+                        'Event structure must contain fields Ts, name, trial.');
+                end
+
+                refName = string(trialStartReference);
+                if strlength(refName) == 0
+                    error('NeuralEmbedding:absoluteToRelativeEvents:invalidTrialStartReference', ...
+                        'trialStartReference event name must be non-empty.');
+                end
+
+                validTrialMask = arrayfun(@(e) isnumeric(e.trial) && isscalar(e.trial) && ...
+                    ~isempty(e.trial) && isfinite(e.trial) && ...
+                    e.trial >= 1 && mod(e.trial,1) == 0, evts);
+                if ~all(validTrialMask)
+                    error('NeuralEmbedding:absoluteToRelativeEvents:invalidTrial', ...
+                        ['All events must have a valid trial index to use ', ...
+                        'an event name as trialStartReference.']);
+                end
+
+                trialIdx = [evts.trial];
+                nTrials = max(trialIdx);
+                evtNames = string({evts.name});
+                isRefEvent = strcmp(evtNames, refName);
+                trialStartTimes = nan(1,nTrials);
+                for trial = 1:nTrials
+                    idx = find(isRefEvent & trialIdx == trial, 1, 'first');
+                    if isempty(idx)
+                        error('NeuralEmbedding:absoluteToRelativeEvents:missingTrialStartEvent', ...
+                            'No event named %s found for trial %d.', refName, trial);
+                    end
+                    trialStartTimes(trial) = evts(idx).Ts;
+                end
+            end
+
+            if ~ismember('trial', ff)
                 error('NeuralEmbedding:absoluteToRelativeEvents:invalidFields', ...
                     'Event structure must contain at least the fields: Ts, trial.');
             end
@@ -1301,7 +1420,8 @@ classdef NeuralEmbedding < handle & ...
             nTrials = numel(trialStartTimes);
             for i = 1:numel(evts)
                 trial = evts(i).trial;
-                if trial < 1 || trial > nTrials
+                if ~isnumeric(trial) || ~isscalar(trial) || isempty(trial) || ...
+                        ~isfinite(trial) || trial < 1 || mod(trial,1) ~= 0 || trial > nTrials
                     error('NeuralEmbedding:absoluteToRelativeEvents:invalidTrial', ...
                         'Trial index %d is out of range [1, %d].', trial, nTrials);
                 end
@@ -1598,5 +1718,4 @@ classdef NeuralEmbedding < handle & ...
         end
     end
 end
-
 
