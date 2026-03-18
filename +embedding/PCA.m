@@ -1,4 +1,4 @@
-function [E,ProjMatrix,ProjMatrixInv,VarExplained] = PCA(D,pars,W, VarExplained)
+function [E,ProjMatrix,ProjMatrixInv,VarExplained] = PCA(D,pars,W)
 
 if nargin < 3
     [W, VarExplained] = deal([]);
@@ -12,8 +12,13 @@ for id=1:size(D,1)
 end
 if pars.projectOnly
     E = embedding.PCA.project(D,W);
+    Winv = W{1}';
+    data = [D{:}];
+    VarExplained = NeuralEmbedding.explainedVar(Winv * [E{:}], data);
+    VarExplained = {VarExplained(2,1)};
+
     ProjMatrix = W;
-    ProjMatrixInv = {W{1}'};
+    ProjMatrixInv = {Winv};
 else
     [E,ProjMatrix,VarExplained] = embedding.PCA.reduce(D_,pars.numPC);
     E = cellfun(@(e)e(1:pars.numPC,:),E,'UniformOutput',false);

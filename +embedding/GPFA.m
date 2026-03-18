@@ -1,4 +1,4 @@
-function [E,ProjMatrix,VarExplained]= GPFA(D,pars,W, VarExplained)
+function [E,ProjMatrix,VarExplained]= GPFA(D,pars,W)
 if nargin < 3
     [W, VarExplained] = deal([]);
 end

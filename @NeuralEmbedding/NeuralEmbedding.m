@@ -108,7 +108,7 @@ classdef NeuralEmbedding < handle & ...
         M_ = ...
             struct('type',[],'date',[],'condition',...                      % Metrics struct storing quality matrics.
             [],'data',[],'Area',[]);
-        Events_ = struct('Ts',{},'name',{},'trial',{},'data',{});          % Events struct array (Ts, name, trial, data)
+        Events_ = struct('Ts',{},'Name',{},'Trial',{},'Data',{});          % Events struct array (Ts, name, trial, data)
         W_ cell                                                            % projection matrix
         Winv_ cell                                                         % inverse projection matrix
         mu  double = 0                                                     % per unit mean 
@@ -253,9 +253,9 @@ classdef NeuralEmbedding < handle & ...
         %   ADDEVENTS(OBJ, EVTS) adds events stored in the struct array EVTS to
         %   the object. EVTS must be a struct array with the following fields:
         %     Ts    - (double) timestamp relative to trial start (0 = trial alignment)
-        %     name  - (string or char) event name/label
-        %     trial - (double) trial index (1-based)
-        %     data  - (optional) any additional data (reserved for future use)
+        %     Name  - (string or char) event name/label
+        %     Trial - (double) trial index (1-based)
+        %     Data  - (optional) any additional data (reserved for future use)
         %
         %   To convert events with absolute timestamps to the required relative
         %   format, use the static utility:
@@ -271,7 +271,7 @@ classdef NeuralEmbedding < handle & ...
             evts = evts(:);  % normalise to column vector
 
             ff = fieldnames(evts);
-            requiredFields = {'Ts','name','trial'};
+            requiredFields = {'Ts','Name','Trial'};
             if ~all(ismember(requiredFields, ff))
                 error('NeuralEmbedding:addEvents:invalidFields', ...
                     ['Event structure must contain the fields: ' ...
@@ -279,18 +279,70 @@ classdef NeuralEmbedding < handle & ...
             end
 
             % Add optional data field if absent
-            if ~ismember('data', ff)
-                [evts.data] = deal([]);
+            if ~ismember('Data', ff)
+                [evts.Data] = deal([]);
             end
 
+            % remove extra fields 
+            ffToRemove = setdiff(ff,fieldnames(obj.Events_));
+            evts = rmfield(evts,ffToRemove);
+
             % Validate trial indices
-            trialIdx = [evts.trial];
-            if any(trialIdx < 1) || any(trialIdx > obj.nTrial)
+            trialIdx = unique([evts.Trial]);
+            [evts, trialMap, numTrial] = remapTrialIds(evts);
+            if any(trialIdx < 1) || numTrial > obj.nTrial
                 error('NeuralEmbedding:addEvents:invalidTrial', ...
                     'Trial indices must be integers in [1, %d].', obj.nTrial);
             end
 
             obj.Events_ = [obj.Events_; evts(:)];
+
+            function [evts, trialMap, numTrial] = remapTrialIds(evts)
+                %REMAPTRIALIDS Remap evts(:).trial to consecutive IDs 1..numTrial
+                %
+                %   [evts, trialMap, numTrial] = remapTrialIds(evts)
+                %
+                % Input:
+                %   evts : struct array with a scalar numeric field .trial
+                %
+                % Output:
+                %   evts     : same struct array, but with remapped .trial values
+                %   trialMap : table showing original IDs -> new IDs
+                %   numTrial : number of unique trials
+                %
+                % Example:
+                %   [evts, trialMap, numTrial] = remapTrialIds(evts);
+
+                if isempty(evts)
+                    numTrial = 0;
+                    trialMap = table([], [], 'VariableNames', {'oldTrial', 'newTrial'});
+                    return;
+                end
+
+                oldTrial = [evts.Trial];
+
+                if ~isnumeric(oldTrial)
+                    error('The field evts.trial must be numeric.');
+                end
+
+                if any(isnan(oldTrial))
+                    error('The field evts.trial contains NaN values, which cannot be remapped.');
+                end
+
+                % Get unique trial IDs in order of first appearance
+                [uniqueOldTrial, ~, newTrialIdx] = unique(oldTrial, 'stable');
+                numTrial = numel(uniqueOldTrial);
+
+                % Write new IDs back into the struct array
+                for k = 1:numel(evts)
+                    evts(k).Trial = newTrialIdx(k);
+                end
+
+                % Return mapping
+                trialMap = table(uniqueOldTrial(:), (1:numTrial)', ...
+                    'VariableNames', {'oldTrial', 'newTrial'});
+            end
+
         end
     end
 
@@ -620,6 +672,9 @@ classdef NeuralEmbedding < handle & ...
         function set.PostKern(obj,val)
             ts = diff(obj.TrialTime_{1}(1:2));
             obj.postkern = round(val*1e-3/ts);
+            if obj.currentEmbeddingMethod == ""
+                return;
+            end
             for ar = obj.UArea'
                 obj.aMask = ar;
                 obj.findEmbedding(obj.currentEmbeddingMethod,true);
@@ -642,7 +697,7 @@ classdef NeuralEmbedding < handle & ...
                     length(obj.VarExplained_) < find(amask,1,'last')
                 orignial = cat(2,obj.S{:});
                 projected = obj.Winv{:} * cat(2,obj.E{:});
-                r2 = obj.explainedVar(orignial,projected);
+                r2 = NeuralEmbedding.explainedVar(orignial,projected);
                 obj.VarExplained_(amask) = r2(1,2);
             end
             value = obj.VarExplained_(amask);
@@ -941,7 +996,7 @@ classdef NeuralEmbedding < handle & ...
 
     %% Plot data
     methods
-        function plot3(obj,maxT)
+        function plot3(obj,maxT,eventToPlot)
         % PLOT3  Plot embedded neural trajectories in the first three dimensions.
         %   PLOT3(OBJ) plots up to 40 trials (default). Trials are coloured by
         %   time and selected as the closest to the median trajectory.
@@ -953,10 +1008,14 @@ classdef NeuralEmbedding < handle & ...
         %   See also NeuralEmbedding.addEvents
             if nargin < 2
                 maxT = 40;
+                eventToPlot = "";
+            end
+            if nargin < 3
+                eventToPlot = "";
             end
 
             if not(isscalar(obj))
-                arrayfun(@(o)o.plot3(maxT),obj);
+                arrayfun(@(o)o.plot3(maxT,eventToPlot),obj);
                 return;
             end
 
@@ -981,10 +1040,10 @@ classdef NeuralEmbedding < handle & ...
             t = [t{closestIdx}];
 
             % Prepare event-overlay data (unique names, colours, markers)
-            evts = obj.Events_;
+            evts = obj.Events_(ismember([obj.Events_.Name],string(eventToPlot)));
             hasEvents = ~isempty(evts);
             if hasEvents
-                evtNames  = string({evts.name});
+                evtNames  = string({evts.Name});
                 uEvtNames = unique(evtNames, 'stable');
                 nEvtTypes = numel(uEvtNames);
                 evtMarkers = {'o','s','^','v','d','p','h','*','+','x'};
@@ -1012,7 +1071,7 @@ classdef NeuralEmbedding < handle & ...
                         thisName  = uEvtNames(en);
                         nameIdx   = evtNames == thisName;
                         thisEvts  = evts(nameIdx);
-                        thisTrIdx = [thisEvts.trial];
+                        thisTrIdx = [thisEvts.Trial];
 
                         xPts = zeros(1,0);
                         yPts = zeros(1,0);
@@ -1043,7 +1102,7 @@ classdef NeuralEmbedding < handle & ...
                             legendHandles(nValid) = scatter3(ax, xPts, yPts, zPts, ...
                                 50, evtColors(en,:), mk, 'filled', ...
                                 'DisplayName', thisName, ...
-                                'LineWidth', 1.5);
+                                'LineWidth', 1.5,'MarkerFaceAlpha',.2);
                         end
                     end
 
@@ -1298,9 +1357,10 @@ classdef NeuralEmbedding < handle & ...
         %
         %   See also NeuralEmbedding.addEvents
             arguments
-                evts                                  struct
-                namevalue.inferTrialFromBounds  {mustBeNumArrayOrString}
-                namevalue.trialStartReference   (1,1) logical = false
+                evts                                   struct
+                namevalue.inferTrialFromBounds   (1,1) logical = false
+                namevalue.trialStartReference    {NeuralEmbedding.mustBeNumArrayOrString}
+                namevalue.trialToSkip            {mustBeNumeric} = []
             end
 
             evts = evts(:);  % normalise to column vector
@@ -1309,6 +1369,7 @@ classdef NeuralEmbedding < handle & ...
 
             trialStartReference = namevalue.trialStartReference;
             inferTrialFromBounds = namevalue.inferTrialFromBounds;
+            trialToSkip = namevalue.trialToSkip;
 
             if ~ismember('Ts', ff)
                 evts = evts([]);
@@ -1322,20 +1383,20 @@ classdef NeuralEmbedding < handle & ...
                 return;
             end
 
-            ff = fieldnames(evts);
             if ~ismember('trial', ff)
-                [evts.trial] = deal([]);
+                [evts.Trial] = deal([]);
                 ff = fieldnames(evts);
             end
 
             if inferTrialFromBounds
-                if ~ismember('name', ff)
+                if ~ismember('Name', ff)
                     error('NeuralEmbedding:absoluteToRelativeEvents:invalidFields', ...
-                        'Event structure must contain field name when inferTrialFromBounds is true.');
+                        "Event structure must contain field 'Name' " + ...
+                        "when inferTrialFromBounds is true.");
                 end
-                evtNames = string({evts.name});
-                isTrialStart = strcmpi(evtNames,'trialstart');
-                isTrialEnd = strcmpi(evtNames,'trialend');
+                evtNames = string({evts.Name});
+                isTrialStart = strcmpi(evtNames,'BeginTrial');
+                isTrialEnd = strcmpi(evtNames,'EndTrial');
                 if any(isTrialStart) && any(isTrialEnd)
                     tStart = [evts(isTrialStart).Ts];
                     tEnd   = [evts(isTrialEnd).Ts];
@@ -1363,20 +1424,32 @@ classdef NeuralEmbedding < handle & ...
 
                     if ~isempty(tStart)
                         for i = 1:numel(evts)
-                            trial = evts(i).trial;
+                            trial = evts(i).Trial;
                             hasValidTrial = isnumeric(trial) && isscalar(trial) && ...
                                 ~isempty(trial) && isfinite(trial) && ...
                                 trial >= 1 && mod(trial,1) == 0;
                             if ~hasValidTrial
                                 match = find(evts(i).Ts >= tStart & evts(i).Ts <= tEnd, 1, 'first');
                                 if ~isempty(match)
-                                    evts(i).trial = match;
-                                end
-                            end
-                        end
-                    end
-                end
-            end
+                                    evts(i).Trial = match;
+                                end % fi ~isempty(match)
+                            end %fi ~hasValidTrial
+                        end %i
+                    end %fi ~isempty(tStart)
+                end % fi any(isTrialStart) && any(isTrialEnd)
+            end % fi inferTrialFromBounds
+
+            correctTrialIdc = arrayfun(@(e) isnumeric(e.Trial) && ...
+                                            isscalar(e.Trial)  && ...
+                                            ~isempty(e.Trial)  && ...
+                                            isfinite(e.Trial)  && ...
+                                            e.Trial >= 1       && ...
+                                            mod(e.Trial,1) == 0,  ...
+                                evts);
+            evts(~correctTrialIdc) = [];
+
+            evtsToSkip = ismember([evts.Trial],trialToSkip);
+            evts(evtsToSkip) = [];
 
             if isempty(trialStartReference)
                 error('NeuralEmbedding:absoluteToRelativeEvents:missingTrialStartReference', ...
@@ -1388,9 +1461,9 @@ classdef NeuralEmbedding < handle & ...
             if isnumeric(trialStartReference)
                 trialStartTimes = trialStartReference(:)';
             else
-                if ~ismember('name', ff)
+                if ~ismember('Name', ff)
                     error('NeuralEmbedding:absoluteToRelativeEvents:invalidFields', ...
-                        'Event structure must contain fields Ts, name, trial.');
+                        'Event structure must contain fields Ts, Name, trial.');
                 end
 
                 refName = string(trialStartReference);
@@ -1399,25 +1472,32 @@ classdef NeuralEmbedding < handle & ...
                         'trialStartReference event name must be non-empty.');
                 end
 
-                validTrialMask = arrayfun(@(e) isnumeric(e.trial) && isscalar(e.trial) && ...
-                    ~isempty(e.trial) && isfinite(e.trial) && ...
-                    e.trial >= 1 && mod(e.trial,1) == 0, evts);
+                validTrialMask = arrayfun(@(e) isnumeric(e.Trial) && isscalar(e.Trial) && ...
+                    ~isempty(e.Trial) && isfinite(e.Trial) && ...
+                    e.Trial >= 1 && mod(e.Trial,1) == 0, evts);
                 if ~all(validTrialMask)
                     error('NeuralEmbedding:absoluteToRelativeEvents:invalidTrial', ...
                         ['All events must have a valid trial index to use ', ...
                         'an event name as trialStartReference.']);
                 end
 
-                trialIdx = [evts.trial];
-                nTrials = max(trialIdx);
-                evtNames = string({evts.name});
+                allTrialIdx = [evts.Trial];
+                nTrials = max(allTrialIdx);
+                validTrials = setdiff(1:nTrials,trialToSkip);
+                
+                evtNames = string({evts.Name});
                 isRefEvent = strcmp(evtNames, refName);
                 trialStartTimes = nan(1,nTrials);
-                for trial = 1:nTrials
-                    idx = find(isRefEvent & trialIdx == trial, 1, 'first');
+                for trial = validTrials
+                    thisTrialIdx = allTrialIdx == trial;
+                    idx = find(isRefEvent & thisTrialIdx, 1, 'first');
                     if isempty(idx)
-                        error('NeuralEmbedding:absoluteToRelativeEvents:missingTrialStartEvent', ...
+                        warning('NeuralEmbedding:absoluteToRelativeEvents:missingTrialStartEvent', ...
                             'No event named %s found for trial %d.', char(refName), trial);
+                        evts(thisTrialIdx) = [];
+                        allTrialIdx(thisTrialIdx) = [];
+                        isRefEvent(thisTrialIdx) = [];
+                        continue;
                     end
                     trialStartTimes(trial) = evts(idx).Ts;
                 end
@@ -1425,7 +1505,7 @@ classdef NeuralEmbedding < handle & ...
 
             nTrials = numel(trialStartTimes);
             for i = 1:numel(evts)
-                trial = evts(i).trial;
+                trial = evts(i).Trial;
                 if ~isnumeric(trial) || ~isscalar(trial) || isempty(trial) || ...
                         ~isfinite(trial) || trial < 1 || mod(trial,1) ~= 0 || trial > nTrials
                     error('NeuralEmbedding:absoluteToRelativeEvents:invalidTrial', ...
