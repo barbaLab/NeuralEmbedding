@@ -41,6 +41,10 @@ NE.computeMetrics("arc");
 
 ## Documentation
 
+- [Dimensionality Reduction Techniques](./Dimensionality-Reduction-Techniques.md)
+- [Metrics Evaluation](./Metrics-Evaluation.md)
+- [Visualization and Plotting](./Visualization-and-Plotting.md)
+
 For detailed documentation and examples, please refer to the [Wiki](https://github.com/barbaLab/NeuralEmbedding/wiki).
 
 ## Contributing
