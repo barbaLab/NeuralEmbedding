@@ -29,7 +29,7 @@ switch deblank(type)
         % try
             % Compute the embedding using PCA
             [E,W,Winv,VarExplained] = ...
-                embedding.PCA(obj.S,pars,obj.W,{obj.VarExplained});
+                embedding.PCA(obj.S,pars,obj.W);
         % catch er
         %     % If the algorithm fails, set flag to false and rethrow the error
         %     flag = false;
@@ -48,7 +48,7 @@ switch deblank(type)
         try
             % GPFA does not need presmoothing. It gets as input P instead of S
             [E, W, VarExplained] = ...
-                embedding.GPFA(obj.P, pars, obj.W, {obj.VarExplained});       
+                embedding.GPFA(obj.P, pars, obj.W);       
             Winv = {pinv(W{1})};
         catch er
             % If the algorithm fails, set flag to false and rethrow the error
