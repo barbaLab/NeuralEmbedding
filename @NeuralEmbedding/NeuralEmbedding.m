@@ -1284,6 +1284,125 @@ classdef NeuralEmbedding < handle & ...
             
         end
 
+        function  [f,xi] = plotEventDensity(obj,eventToPlot,nbins)
+            if nargin < 2 || isempty(eventToPlot)
+                eventToPlot = "all";
+            end
+
+            if nargin < 3
+                nbins = 50;
+            end
+
+            if ~isscalar(obj)
+                arrayfun(@(o) o.plotEventDensity(eventToPlot, nbins), obj, ...
+                    'UniformOutput',false);
+                return;
+            end
+
+            if  isempty(obj.Events)
+                warning("%s %s has no events, skipping!",obj.Animal,obj.Session);
+                return;
+            end
+
+            if strcmp(eventToPlot,"all")
+                evtLbl = unique([obj.Events.Name]);
+            else
+                evtLbl = string(eventToPlot);
+            end
+
+            tit = obj.Animal + " " + obj.Session + " " + strjoin(evtLbl,", ");
+            figure(Units="normalized",Position=[0.05 0.25 0.4 0.5])
+            % plot([0 1],[1 1],'k--')
+            % hold on
+            weights = cell(1,numel(evtLbl));
+            eventData = cell(1,numel(evtLbl));
+            for ee = 1:numel(evtLbl)
+                selectedEvtsIdx = ismember(string([obj.Events.Name]),evtLbl(ee));
+                %%
+                weights{ee} = nan(1,sum(selectedEvtsIdx));
+                eventData{ee} = nan(1,sum(selectedEvtsIdx));
+                lastIdx = 0;
+                for tt = 1:obj.nTrial
+                    data = num2cell(obj.E{tt},2);
+                    [~,~,cumarc] = metrics.compute.arclength(data{:});
+                    cumarc = cumarc./max(cumarc);
+                    edges = linspace(0,1,nbins+1);
+                    midPoints = edges(1:end-1) + diff(edges)./2;
+                    midPoints = [midPoints nan];
+
+                    [arcdensity,~,binArcIdx]= histcounts([0; cumarc],edges);
+                    arcdensity = [arcdensity nan];
+
+                    evtIdx = [obj.Events.Trial] == tt & ...
+                        selectedEvtsIdx;
+                    thisEvt = obj.Events(evtIdx);
+
+                    % edges = linspace(obj.TrialTime{tt}(1),obj.TrialTime{tt}(end),nbins +1);
+                    % [stimdensity_,~,binID_] = histcounts([thisEvt.Ts],edges);
+                    % binID_(binID_ == 0) = nbins+1;
+
+                    evtInInterval = [thisEvt.Ts] > obj.TrialTime{tt}(1) & ...
+                        [thisEvt.Ts] < obj.TrialTime{tt}(end);
+                    if isempty(evtInInterval) || not(any(evtInInterval)),continue;end
+
+                    [~,closestIdx] = min(abs([thisEvt(evtInInterval).Ts] - ...
+                        obj.TrialTime{tt}'),[],1);
+
+                    binID_ = (nbins+1) * ones(1,numel(thisEvt));
+                    binID_(evtInInterval) = binArcIdx(closestIdx);
+                    eventData{ee}(lastIdx+1:lastIdx+sum(evtIdx)) = midPoints(binID_);
+                    weights{ee}(lastIdx+1:lastIdx+sum(evtIdx)) = arcdensity(binID_);
+
+                    lastIdx = lastIdx+sum(evtIdx);
+                end %tt
+
+            end%ee
+
+
+            %% Plotting the density using gramm
+
+            %% ks density part
+            npoints = 50;
+            f = zeros(numel(evtLbl),npoints);
+            xi = f;
+            for ee = 1:numel(evtLbl)
+                [f(ee,:),xi(ee,:)] = ksdensity(eventData{ee}, ...
+                    Weights=1./weights{ee}, ...
+                    Censoring=isnan(eventData{ee}), ...
+                    NumPoints=npoints, ...
+                    Bandwidth="normal-approx", ...
+                    Support=[0-eps 1+eps], ...
+                    BoundaryCorrection="reflection");
+            end
+            plotLbl = categorical(repmat(evtLbl',1,npoints));
+            g = gramm(x = xi(:), y = f(:), color = plotLbl(:));
+            g.geom_line();
+            g.set_names(x="Normalized arclength",color="events");
+            g.set_title(tit);
+            g.draw();
+
+            % %% histogram part
+            % x_plot = cat(2,eventData{:});
+            % x_weights = cat(2,weights{:});
+            % evtLbl_plot = arrayfun(@(lbl,n)repmat(n,1,lbl), ...
+            %     cellfun(@numel,eventData), ...
+            %     evtLbl, ...
+            %     'UniformOutput', false);
+            % evtLbl_plot = cellstr(cat(2,evtLbl_plot{:}));
+            % evtLbl_plot(isnan(x_plot)) = [];
+            % x_plot(isnan(x_plot)) = [];
+            % 
+            % g = gramm(x=x_plot,color=evtLbl_plot);
+            % edges = linspace(0,1,nbins+1);
+            % bin_width = 1./nbins;
+            % g.stat_bin("edges",edges,"normalization","pdf","geom","overlaid_bar")
+            % flatDist = floor(numel(eventData{ee})./nbins)./(numel(eventData{ee}) * bin_width);
+            % g.geom_hline("yintercept",flatDist,"style",'k--')
+            % g.set_names(x="Normalized arclength",color="events");
+            % g.draw();
+        end
+
+
     end
 
     %% Class data preview
