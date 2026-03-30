@@ -1,4 +1,4 @@
-function [arclen,seglen] = arclength(px,py,varargin)
+function [arclen,seglen,cumarclen] = arclength(px,py,varargin)
 % arclength: compute arc length of a space curve, or any curve represented as a sequence of points
 % usage: [arclen,seglen] = arclength(px,py)         % a 2-d curve
 % usage: [arclen,seglen] = arclength(px,py,pz)      % a 3-d space curve
@@ -156,6 +156,7 @@ nd = size(data,2);
 % compute the chordal linear arclengths
 seglen = sqrt(sum(diff(data,[],1).^2,2));
 arclen = sum(seglen);
+cumarclen = cumsum(seglen);
 
 % we can quit if the method was 'linear'.
 if strcmpi(method,'linear')
@@ -209,6 +210,7 @@ end
 
 % and sum the segments
 arclen = sum(seglen);
+cumarclen = cumsum(seglen);
 
 % ==========================
 %   end main function

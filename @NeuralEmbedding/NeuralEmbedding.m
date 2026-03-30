@@ -22,7 +22,7 @@ classdef NeuralEmbedding < handle & ...
     end
 
     properties(Dependent,Access=public)
-        tMask       cell                                                 % Time vector mask, ie what time bins to use to embed data
+        tMask                                                           % Time vector mask, ie what time bins to use to embed data
         aMask       string                                                  % Area vector mask, ie what area to use during computation
         cMask       string                                                  % Condition vector mask, ie whar condition to use during computation
         
@@ -513,7 +513,7 @@ classdef NeuralEmbedding < handle & ...
                       length(val) == length(obj.TrialTime_{1})
                 % If the input is a logical array, replicate it to match the
                 % number of trials
-                obj.tMask_ = repmat({val},obj.nTrial,1);
+                obj.tMask_ = repmat({val(:)},obj.nTrial,1);
 
             elseif iscell(val) && ...
                     obj.homogeneous && ...
@@ -1032,10 +1032,11 @@ classdef NeuralEmbedding < handle & ...
             MaxLines = min(nT,maxT);
             % idx = randperm(nT,MaxLines);
             closestIdx = findClosestN(reducedE_,MaxLines);
+            selectedTrialIdx = closestIdx;
 
             % Map filtered-trial indices to absolute trial indices for event lookup
-            cMaskIdx = find(obj.cMask(:));
-            selectedTrialIdx = cMaskIdx(closestIdx);
+            % cMaskIdx = find(obj.cMask(:));
+            % selectedTrialIdx = cMaskIdx(closestIdx);
 
             t = [t{closestIdx}];
 
@@ -1102,7 +1103,7 @@ classdef NeuralEmbedding < handle & ...
                             legendHandles(nValid) = scatter3(ax, xPts, yPts, zPts, ...
                                 50, evtColors(en,:), mk, 'filled', ...
                                 'DisplayName', thisName, ...
-                                'LineWidth', 1.5,'MarkerFaceAlpha',.2);
+                                'LineWidth', 1.5,'MarkerFaceAlpha',.6);
                         end
                     end
 
