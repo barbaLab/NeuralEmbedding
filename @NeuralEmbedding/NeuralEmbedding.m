@@ -1281,128 +1281,162 @@ classdef NeuralEmbedding < handle & ...
                 idx = idx(1:N);
             end
 
-            
+
         end
 
-        function  [f,xi] = plotEventDensity(obj,eventToPlot,nbins)
+        function [f, xi] = plotEventDensity(obj, eventToPlot, nbins)
+
             if nargin < 2 || isempty(eventToPlot)
                 eventToPlot = "all";
             end
-
-            if nargin < 3
+            if nargin < 3 || isempty(nbins)
                 nbins = 50;
             end
 
+            eventToPlot = string(eventToPlot);
+            f = [];
+            xi = [];
+
             if ~isscalar(obj)
                 arrayfun(@(o) o.plotEventDensity(eventToPlot, nbins), obj, ...
-                    'UniformOutput',false);
-                return;
+                    'UniformOutput', false);
+                return
             end
 
-            if  isempty(obj.Events)
-                warning("%s %s has no events, skipping!",obj.Animal,obj.Session);
-                return;
+            if isempty(obj.Events)
+                warning("%s %s has no events, skipping!", obj.Animal, obj.Session);
+                return
             end
 
-            if strcmp(eventToPlot,"all")
-                evtLbl = unique([obj.Events.Name]);
+            % Pull event fields once
+            eventNames  = string({obj.Events.Name});
+            eventTrials = [obj.Events.Trial];
+            eventTs     = [obj.Events.Ts];
+
+            if isscalar(eventToPlot) && eventToPlot == "all"
+                evtLbl = unique(eventNames);   % keeps original behavior more closely
             else
-                evtLbl = string(eventToPlot);
+                evtLbl = eventToPlot(:).';
             end
 
-            tit = obj.Animal + " " + obj.Session + " " + strjoin(evtLbl,", ");
-            figure(Units="normalized",Position=[0.05 0.25 0.4 0.5])
-            % plot([0 1],[1 1],'k--')
-            % hold on
-            weights = cell(1,numel(evtLbl));
-            eventData = cell(1,numel(evtLbl));
-            for ee = 1:numel(evtLbl)
-                selectedEvtsIdx = ismember(string([obj.Events.Name]),evtLbl(ee));
-                %%
-                weights{ee} = nan(1,sum(selectedEvtsIdx));
-                eventData{ee} = nan(1,sum(selectedEvtsIdx));
-                lastIdx = 0;
-                for tt = 1:obj.nTrial
-                    data = num2cell(obj.E{tt},2);
-                    [~,~,cumarc] = metrics.compute.arclength(data{:});
-                    cumarc = cumarc./max(cumarc);
-                    edges = linspace(0,1,nbins+1);
-                    midPoints = edges(1:end-1) + diff(edges)./2;
-                    midPoints = [midPoints nan];
+            [isSelectedEvent, evtGroup] = ismember(eventNames, evtLbl);
 
-                    [arcdensity,~,binArcIdx]= histcounts([0; cumarc],edges);
-                    arcdensity = [arcdensity nan];
+            if ~any(isSelectedEvent)
+                warning("No matching events found for requested label(s).");
+                return
+            end
 
-                    evtIdx = [obj.Events.Trial] == tt & ...
-                        selectedEvtsIdx;
-                    thisEvt = obj.Events(evtIdx);
+            tit = obj.Animal + " " + obj.Session + " " + strjoin(evtLbl, ", ");
+            figure(Units="normalized", Position=[0.05 0.25 0.4 0.5])
 
-                    % edges = linspace(obj.TrialTime{tt}(1),obj.TrialTime{tt}(end),nbins +1);
-                    % [stimdensity_,~,binID_] = histcounts([thisEvt.Ts],edges);
-                    % binID_(binID_ == 0) = nbins+1;
+            % Preallocate output containers by label
+            countsPerGroup = accumarray(evtGroup(isSelectedEvent).', 1, ...
+                [numel(evtLbl), 1], @sum, 0);
 
-                    evtInInterval = [thisEvt.Ts] > obj.TrialTime{tt}(1) & ...
-                        [thisEvt.Ts] < obj.TrialTime{tt}(end);
-                    if isempty(evtInInterval) || not(any(evtInInterval)),continue;end
+            eventData = arrayfun(@(n) nan(1, n), countsPerGroup, ...
+                'UniformOutput', false);
+            weights = arrayfun(@(n) nan(1, n), countsPerGroup, ...
+                'UniformOutput', false);
+            writePos = ones(numel(evtLbl), 1);
 
-                    [~,closestIdx] = min(abs([thisEvt(evtInInterval).Ts] - ...
-                        obj.TrialTime{tt}'),[],1);
+            % Bin geometry is global, so compute once
+            edges = linspace(0, 1, nbins + 1);
+            midPoints = edges(1:end-1) + diff(edges) ./ 2;
+            midPoints = [midPoints nan];  % sentinel for invalid/out-of-range bins
 
-                    binID_ = (nbins+1) * ones(1,numel(thisEvt));
-                    binID_(evtInInterval) = binArcIdx(closestIdx);
-                    eventData{ee}(lastIdx+1:lastIdx+sum(evtIdx)) = midPoints(binID_);
-                    weights{ee}(lastIdx+1:lastIdx+sum(evtIdx)) = arcdensity(binID_);
+            % Process each trial ONCE
+            for tt = 1:obj.nTrial
 
-                    lastIdx = lastIdx+sum(evtIdx);
-                end %tt
+                evtMask = isSelectedEvent & (eventTrials == tt);
+                if ~any(evtMask)
+                    continue
+                end
 
-            end%ee
+                % --- expensive trial-specific work: do once ---
+                data = num2cell(obj.E{tt}, 2);
+                [~, ~, cumarc] = metrics.compute.arclength(data{:});
 
+                maxArc = max(cumarc);
+                if isempty(maxArc) || ~isfinite(maxArc) || maxArc <= 0
+                    continue
+                end
 
-            %% Plotting the density using gramm
+                cumarc = cumarc ./ maxArc;
 
-            %% ks density part
+                [arcDensity, ~, binArcIdx] = histcounts([0; cumarc], edges);
+                arcDensity = [arcDensity nan];   % sentinel weight for invalid bin
+
+                trialTime = obj.TrialTime{tt}(:);
+
+                thisTs    = eventTs(evtMask);
+                thisGroup = evtGroup(evtMask);
+
+                thisEventData = nan(1, numel(thisTs));
+                thisWeights   = nan(1, numel(thisTs));
+
+                % Only events inside trial range contribute
+                valid = thisTs > trialTime(1) & thisTs < trialTime(end);
+
+                if any(valid)
+                    % Much faster than min(abs(ts - trialTime'))
+                    nearestIdx = interp1(trialTime, 1:numel(trialTime), ...
+                        thisTs(valid), "nearest");
+
+                    nearestIdx = round(nearestIdx);
+                    nearestIdx = max(1, min(numel(binArcIdx), nearestIdx));
+
+                    thisBins = binArcIdx(nearestIdx);
+                    thisBins(thisBins == 0) = nbins + 1;   % safety guard
+
+                    thisEventData(valid) = midPoints(thisBins);
+                    thisWeights(valid)   = arcDensity(thisBins);
+                end
+
+                % Write into each label bucket
+                presentGroups = unique(thisGroup);
+                for kk = 1:numel(presentGroups)
+                    gidx = presentGroups(kk);
+                    m = (thisGroup == gidx);
+                    n = nnz(m);
+
+                    idx = writePos(gidx):(writePos(gidx) + n - 1);
+                    eventData{gidx}(idx) = thisEventData(m);
+                    weights{gidx}(idx)   = thisWeights(m);
+
+                    writePos(gidx) = writePos(gidx) + n;
+                end
+            end
+
+            % KDE
             npoints = 50;
-            f = zeros(numel(evtLbl),npoints);
-            xi = f;
+            f  = nan(numel(evtLbl), npoints);
+            xi = nan(numel(evtLbl), npoints);
+
             for ee = 1:numel(evtLbl)
-                [f(ee,:),xi(ee,:)] = ksdensity(eventData{ee}, ...
-                    Weights=1./weights{ee}, ...
-                    Censoring=isnan(eventData{ee}), ...
-                    NumPoints=npoints, ...
-                    Bandwidth="normal-approx", ...
-                    Support=[0-eps 1+eps], ...
-                    BoundaryCorrection="reflection");
+                valid = ~isnan(eventData{ee}) & ~isnan(weights{ee}) & (weights{ee} > 0);
+
+                if nnz(valid) < 2
+                    continue
+                end
+
+                [f(ee,:), xi(ee,:)] = ksdensity(eventData{ee}(valid), ...
+                    Weights = 1 ./ weights{ee}(valid), ...
+                    NumPoints = npoints, ...
+                    Bandwidth = "normal-approx", ...
+                    Support = [0-eps 1+eps], ...
+                    BoundaryCorrection = "reflection");
             end
-            plotLbl = categorical(repmat(evtLbl',1,npoints));
+
+            plotLbl = categorical(repelem(evtLbl(:), 1,npoints));
+            % plotMask = isfinite(xi(:)) & isfinite(f(:));
+
             g = gramm(x = xi(:), y = f(:), color = plotLbl(:));
             g.geom_line();
-            g.set_names(x="Normalized arclength",color="events");
+            g.set_names(x = "Normalized arclength", color = "events");
             g.set_title(tit);
             g.draw();
-
-            % %% histogram part
-            % x_plot = cat(2,eventData{:});
-            % x_weights = cat(2,weights{:});
-            % evtLbl_plot = arrayfun(@(lbl,n)repmat(n,1,lbl), ...
-            %     cellfun(@numel,eventData), ...
-            %     evtLbl, ...
-            %     'UniformOutput', false);
-            % evtLbl_plot = cellstr(cat(2,evtLbl_plot{:}));
-            % evtLbl_plot(isnan(x_plot)) = [];
-            % x_plot(isnan(x_plot)) = [];
-            % 
-            % g = gramm(x=x_plot,color=evtLbl_plot);
-            % edges = linspace(0,1,nbins+1);
-            % bin_width = 1./nbins;
-            % g.stat_bin("edges",edges,"normalization","pdf","geom","overlaid_bar")
-            % flatDist = floor(numel(eventData{ee})./nbins)./(numel(eventData{ee}) * bin_width);
-            % g.geom_hline("yintercept",flatDist,"style",'k--')
-            % g.set_names(x="Normalized arclength",color="events");
-            % g.draw();
         end
-
-
+   
     end
 
     %% Class data preview
