@@ -743,8 +743,7 @@ classdef NeuralEmbedding < handle & ...
                 % set(obj,pn,pars.(pn));
             end
         end
-    
-        
+
         function removeInactiveNeurons(obj)
         %% REMOVEINACTIVENEURONS Remove inactive neurons from the data
         % and replaces them with random spikes
@@ -847,7 +846,6 @@ classdef NeuralEmbedding < handle & ...
                 'UniformOutput',false);
             obj.tMaskSub = tMaskSub_(:);
         end
-
 
         function smoothData(obj)
             %% SMOOTHEDDATA Smooth the preprocessed data using a Gaussian kernel
@@ -987,6 +985,226 @@ classdef NeuralEmbedding < handle & ...
     %% Compute embeddings
     methods (Access=public)
          flag = findEmbedding(obj,type,Area)
+
+         function [f, xi, evtLbl] = computeEventDensity(obj, eventToPlot, nbins, npoints)
+             %COMPUTEEVENTDENSITY Compute event-density estimates along normalized trial arclength.
+             %
+             %   [F, XI, EVTLBL] = COMPUTEEVENTDENSITY(OBJ)
+             %   computes kernel density estimates for all event labels in OBJ.Events,
+             %   using a normalized arclength representation of each trial.
+             %
+             %   [F, XI, EVTLBL] = COMPUTEEVENTDENSITY(OBJ, EVENTTOPLOT)
+             %   restricts the computation to the requested event label(s). EVENTTOPLOT
+             %   can be:
+             %       - "all"              : use all unique event names in OBJ.Events
+             %       - string scalar      : use one event label
+             %       - string array/cell  : use multiple event labels
+             %
+             %   [F, XI, EVTLBL] = COMPUTEEVENTDENSITY(OBJ, EVENTTOPLOT, NBINS)
+             %   uses NBINS bins to discretize the normalized arclength within each
+             %   trial before assigning event locations and occupancy weights.
+             %
+             %   [F, XI, EVTLBL] = COMPUTEEVENTDENSITY(OBJ, EVENTTOPLOT, NBINS, NPOINTS)
+             %   evaluates the kernel density estimate at NPOINTS positions.
+             %
+             %   Inputs
+             %   ------
+             %   OBJ : scalar object or object array
+             %       Object containing at least the following fields/properties:
+             %           - Events      : struct array with fields Name, Trial, Ts
+             %           - E           : per-trial trajectory data
+             %           - TrialTime   : per-trial timestamps
+             %           - nTrial      : number of trials
+             %           - Animal      : used for warnings/titles only
+             %           - Session     : used for warnings/titles only
+             %
+             %   EVENTTOPLOT : string, string array, cellstr, or "all"
+             %       Event label(s) to include in the density estimate.
+             %
+             %   NBINS : positive integer, default = 50
+             %       Number of normalized arclength bins used to estimate occupancy.
+             %
+             %   NPOINTS : positive integer, default = 50
+             %       Number of evaluation points used by KSDENSITY.
+             %
+             %   Outputs
+             %   -------
+             %   F : numeric array
+             %       Density values returned by KSDENSITY. Size is
+             %       [numel(EVTLBL) x NPOINTS] for scalar OBJ.
+             %       If OBJ is an array, F is a cell array with one entry per object.
+             %
+             %   XI : numeric array
+             %       Evaluation points associated with F. Same size/layout as F.
+             %
+             %   EVTLBL : string array
+             %       Event labels corresponding to the rows of F and XI.
+             %       If OBJ is an array, EVTLBL is a cell array with one entry per object.
+             %
+             %   Description
+             %   -----------
+             %   For each trial, the trajectory is converted to cumulative arclength and
+             %   normalized to the interval [0, 1]. Event timestamps are matched to the
+             %   nearest sample in TrialTime, then assigned to the corresponding
+             %   normalized arclength bin. A weighted kernel density estimate is computed
+             %   for each event label, where weights are inversely proportional to the
+             %   occupancy of the arclength bin in that trial.
+             %
+             %   Notes
+             %   -----
+             %   - Trials are processed once and reused across event groups for speed.
+             %   - Events outside the TrialTime interval are ignored.
+             %   - Labels with too few valid samples return NaN rows in F and XI.
+             %   - This function computes data only and does not create a figure.
+             %
+             %   Example
+             %   -------
+             %   [f, xi, evtLbl] = obj.computeEventDensity("reward", 50, 100);
+             %
+             %   See also KSDENSITY, HISTCOUNTS, INTERP1
+             if nargin < 2 || isempty(eventToPlot)
+                 eventToPlot = "all";
+             end
+             if nargin < 3 || isempty(nbins)
+                 nbins = 50;
+             end
+             if nargin < 4 || isempty(npoints)
+                 npoints = 50;
+             end
+
+             eventToPlot = string(eventToPlot);
+             f = [];
+             xi = [];
+             evtLbl = strings(1,0);
+
+             if ~isscalar(obj)
+                 nObj = numel(obj);
+                 [f, xi, evtLbl] = deal(cell(1, nObj));
+                 for oo = 1:nObj
+                     [f{oo}, xi{oo}, evtLbl{oo}] = obj(oo).computeEventDensity( ...
+                         eventToPlot, nbins, npoints);
+                 end
+                 return
+             end
+
+             if isempty(obj.Events)
+                 warning("%s %s has no events, skipping!", obj.Animal, obj.Session);
+                 return
+             end
+
+             % Pull event fields once
+             eventNames  = string({obj.Events.Name});
+             eventTrials = [obj.Events.Trial];
+             eventTs     = [obj.Events.Ts];
+
+             if isscalar(eventToPlot) && eventToPlot == "all"
+                 evtLbl = unique(eventNames);
+             else
+                 evtLbl = eventToPlot(:).';
+             end
+
+             [isSelectedEvent, evtGroup] = ismember(eventNames, evtLbl);
+
+             if ~any(isSelectedEvent)
+                 warning("No matching events found for requested label(s).");
+                 f = nan(numel(evtLbl), npoints);
+                 xi = nan(numel(evtLbl), npoints);
+                 return
+             end
+
+             % Preallocate output containers by label
+             countsPerGroup = accumarray(evtGroup(isSelectedEvent).', 1, ...
+                 [numel(evtLbl), 1], @sum, 0);
+
+             eventData = arrayfun(@(n) nan(1, n), countsPerGroup, ...
+                 'UniformOutput', false);
+             weights = arrayfun(@(n) nan(1, n), countsPerGroup, ...
+                 'UniformOutput', false);
+             writePos = ones(numel(evtLbl), 1);
+
+             % Global bin geometry
+             edges = linspace(0, 1, nbins + 1);
+             midPoints = edges(1:end-1) + diff(edges) ./ 2;
+             midPoints = [midPoints nan];
+
+             % Process each trial once
+             for tt = 1:obj.nTrial
+
+                 evtMask = isSelectedEvent & (eventTrials == tt);
+                 if ~any(evtMask)
+                     continue
+                 end
+
+                 data = num2cell(obj.E{tt}, 2);
+                 [~, ~, cumarc] = metrics.compute.arclength(data{:});
+
+                 maxArc = max(cumarc);
+                 if isempty(maxArc) || ~isfinite(maxArc) || maxArc <= 0
+                     continue
+                 end
+
+                 cumarc = cumarc ./ maxArc;
+
+                 [arcDensity, ~, binArcIdx] = histcounts([0; cumarc], edges);
+                 arcDensity = [arcDensity nan];
+
+                 trialTime = obj.TrialTime{tt}(:);
+
+                 thisTs    = eventTs(evtMask);
+                 thisGroup = evtGroup(evtMask);
+
+                 thisEventData = nan(1, numel(thisTs));
+                 thisWeights   = nan(1, numel(thisTs));
+
+                 valid = thisTs > trialTime(1) & thisTs < trialTime(end);
+
+                 if any(valid)
+                     nearestIdx = interp1(trialTime, 1:numel(trialTime), ...
+                         thisTs(valid), "nearest");
+
+                     nearestIdx = round(nearestIdx);
+                     nearestIdx = max(1, min(numel(binArcIdx), nearestIdx));
+
+                     thisBins = binArcIdx(nearestIdx);
+                     thisBins(thisBins == 0) = nbins + 1;
+
+                     thisEventData(valid) = midPoints(thisBins);
+                     thisWeights(valid)   = arcDensity(thisBins);
+                 end
+
+                 presentGroups = unique(thisGroup);
+                 for kk = 1:numel(presentGroups)
+                     gidx = presentGroups(kk);
+                     m = (thisGroup == gidx);
+                     n = nnz(m);
+
+                     idx = writePos(gidx):(writePos(gidx) + n - 1);
+                     eventData{gidx}(idx) = thisEventData(m);
+                     weights{gidx}(idx)   = thisWeights(m);
+
+                     writePos(gidx) = writePos(gidx) + n;
+                 end
+             end
+
+             % KDE
+             f  = nan(numel(evtLbl), npoints);
+             xi = nan(numel(evtLbl), npoints);
+
+             for ee = 1:numel(evtLbl)
+                 valid = ~isnan(eventData{ee}) & ~isnan(weights{ee}) & (weights{ee} > 0);
+
+                 if nnz(valid) < 2
+                     continue
+                 end
+
+                 [f(ee,:), xi(ee,:)] = ksdensity(eventData{ee}(valid), ...
+                     Weights = 1 ./ weights{ee}(valid), ...
+                     NumPoints = npoints, ...
+                     Bandwidth = "normal-approx", ...
+                     Support = [0-eps 1+eps], ...
+                     BoundaryCorrection = "reflection");
+             end
+         end
     end
 
     %% Compute manifold metrices
@@ -1191,7 +1409,7 @@ classdef NeuralEmbedding < handle & ...
             %         [~,idxRFA] = sort(i);
             %     end
             %     imagesc(ax,t-t(floor(numel(t)/2)),1:sum(~all(0 == Zdata{ii}(idxRFA,:),2)),Zdata{ii}(idxRFA(~all(isnan(Zdata{ii}(idxRFA,:)),2)),:));
-            % 
+            %
             %     title(uCond{ii});
             %     ax.YTickLabel = cellstr(num2str(idxRFA));
             %     ax.XAxis.Visible = false;
@@ -1201,8 +1419,8 @@ classdef NeuralEmbedding < handle & ...
             %     ylim(ax,yl)
             %     box off
             %     colorbar
-            % 
-            % 
+            %
+            %
             %     ax = subplot(2,numel(uCond),ii+numel(uCond));
             %     if ii == 1 || ordered
             %         [v,i] = max(Zdata{ii}(unitS1:end,:),[],2);
@@ -1219,15 +1437,15 @@ classdef NeuralEmbedding < handle & ...
             %     ylim(ax,yl)
             %     box off
             %     colorbar
-            % 
-            %     
-            % 
+            %
+            %
+            %
             % sgtitle(tankObj.Children(aa).Name);
 
             obj.cMask = BakCond;
             obj.aMask = BakArea;
         end
-  
+
         function animate3(obj,maxT)
             if nargin < 2
                 maxT = 40;
@@ -1283,160 +1501,107 @@ classdef NeuralEmbedding < handle & ...
 
 
         end
-
-        function [f, xi] = plotEventDensity(obj, eventToPlot, nbins)
-
+        
+        function g = plotEventDensity(obj, eventToPlot, nbins, npoints)
+            %PLOTEVENTDENSITY Plot event-density estimates along normalized trial arclength.
+            %
+            %   G = PLOTEVENTDENSITY(OBJ)
+            %   computes and plots event-density curves for all event labels in
+            %   OBJ.Events.
+            %
+            %   G = PLOTEVENTDENSITY(OBJ, EVENTTOPLOT)
+            %   plots only the requested event label(s).
+            %
+            %   G = PLOTEVENTDENSITY(OBJ, EVENTTOPLOT, NBINS)
+            %   uses NBINS arclength bins to compute occupancy weights.
+            %
+            %   G = PLOTEVENTDENSITY(OBJ, EVENTTOPLOT, NBINS, NPOINTS)
+            %   evaluates each kernel density on NPOINTS positions before plotting.
+            %
+            %   Inputs
+            %   ------
+            %   OBJ : scalar object or object array
+            %       Object containing event, trial, and trajectory information.
+            %
+            %   EVENTTOPLOT : string, string array, cellstr, or "all"
+            %       Event label(s) to plot. Default is "all".
+            %
+            %   NBINS : positive integer, default = 50
+            %       Number of normalized arclength bins used during density
+            %       computation.
+            %
+            %   NPOINTS : positive integer, default = 50
+            %       Number of KDE evaluation points per event label.
+            %
+            %   Outputs
+            %   -------
+            %   G : gramm object or cell array
+            %       GRAMM object used to draw the figure. If OBJ is an object array,
+            %       G is returned as a cell array with one GRAMM object per element.
+            %
+            %   Description
+            %   -----------
+            %   This function is a lightweight plotting wrapper around
+            %   COMPUTEEVENTDENSITY. It computes event-density estimates and displays
+            %   them as line plots using GRAMM, with one line per event label.
+            %
+            %   Notes
+            %   -----
+            %   - For object arrays, the function loops over objects and returns a cell
+            %     array of GRAMM objects.
+            %   - Invalid or insufficiently sampled event groups are skipped in the
+            %     plot through finite-value masking.
+            %   - For custom multi-session or cross-day visualizations, it is generally
+            %     preferable to call COMPUTEEVENTDENSITY directly and build the plot
+            %     separately.
+            %
+            %   Example
+            %   -------
+            %   g = obj.plotEventDensity("reward", 50, 100);
+            %
+            %   See also COMPUTEEVENTDENSITY, GRAMM
             if nargin < 2 || isempty(eventToPlot)
                 eventToPlot = "all";
             end
             if nargin < 3 || isempty(nbins)
                 nbins = 50;
             end
-
-            eventToPlot = string(eventToPlot);
-            f = [];
-            xi = [];
+            if nargin < 4 || isempty(npoints)
+                npoints = 50;
+            end
 
             if ~isscalar(obj)
-                arrayfun(@(o) o.plotEventDensity(eventToPlot, nbins), obj, ...
-                    'UniformOutput', false);
+                nObj = numel(obj);
+                [f, xi, evtLbl, g] = deal(cell(1, nObj));
+                for oo = 1:nObj
+                    [f{oo}, xi{oo}, evtLbl{oo}, g{oo}] = obj(oo).plotEventDensity( ...
+                        eventToPlot, nbins, npoints);
+                end
                 return
             end
 
-            if isempty(obj.Events)
-                warning("%s %s has no events, skipping!", obj.Animal, obj.Session);
+            [f, xi, evtLbl] = obj.computeEventDensity(eventToPlot, nbins, npoints);
+
+            if isempty(f) || isempty(xi) || isempty(evtLbl)
+                g = [];
                 return
             end
 
-            % Pull event fields once
-            eventNames  = string({obj.Events.Name});
-            eventTrials = [obj.Events.Trial];
-            eventTs     = [obj.Events.Ts];
+            tit = obj.Animal + " " + obj.Session;
 
-            if isscalar(eventToPlot) && eventToPlot == "all"
-                evtLbl = unique(eventNames);   % keeps original behavior more closely
-            else
-                evtLbl = eventToPlot(:).';
-            end
+            plotLbl = categorical(repelem(evtLbl(:), npoints, 1));
+            xPlot = xi(:);
+            yPlot = f(:);
+            mask = isfinite(xPlot) & isfinite(yPlot);
 
-            [isSelectedEvent, evtGroup] = ismember(eventNames, evtLbl);
-
-            if ~any(isSelectedEvent)
-                warning("No matching events found for requested label(s).");
-                return
-            end
-
-            tit = obj.Animal + " " + obj.Session + " " + strjoin(evtLbl, ", ");
             figure(Units="normalized", Position=[0.05 0.25 0.4 0.5])
 
-            % Preallocate output containers by label
-            countsPerGroup = accumarray(evtGroup(isSelectedEvent).', 1, ...
-                [numel(evtLbl), 1], @sum, 0);
-
-            eventData = arrayfun(@(n) nan(1, n), countsPerGroup, ...
-                'UniformOutput', false);
-            weights = arrayfun(@(n) nan(1, n), countsPerGroup, ...
-                'UniformOutput', false);
-            writePos = ones(numel(evtLbl), 1);
-
-            % Bin geometry is global, so compute once
-            edges = linspace(0, 1, nbins + 1);
-            midPoints = edges(1:end-1) + diff(edges) ./ 2;
-            midPoints = [midPoints nan];  % sentinel for invalid/out-of-range bins
-
-            % Process each trial ONCE
-            for tt = 1:obj.nTrial
-
-                evtMask = isSelectedEvent & (eventTrials == tt);
-                if ~any(evtMask)
-                    continue
-                end
-
-                % --- expensive trial-specific work: do once ---
-                data = num2cell(obj.E{tt}, 2);
-                [~, ~, cumarc] = metrics.compute.arclength(data{:});
-
-                maxArc = max(cumarc);
-                if isempty(maxArc) || ~isfinite(maxArc) || maxArc <= 0
-                    continue
-                end
-
-                cumarc = cumarc ./ maxArc;
-
-                [arcDensity, ~, binArcIdx] = histcounts([0; cumarc], edges);
-                arcDensity = [arcDensity nan];   % sentinel weight for invalid bin
-
-                trialTime = obj.TrialTime{tt}(:);
-
-                thisTs    = eventTs(evtMask);
-                thisGroup = evtGroup(evtMask);
-
-                thisEventData = nan(1, numel(thisTs));
-                thisWeights   = nan(1, numel(thisTs));
-
-                % Only events inside trial range contribute
-                valid = thisTs > trialTime(1) & thisTs < trialTime(end);
-
-                if any(valid)
-                    % Much faster than min(abs(ts - trialTime'))
-                    nearestIdx = interp1(trialTime, 1:numel(trialTime), ...
-                        thisTs(valid), "nearest");
-
-                    nearestIdx = round(nearestIdx);
-                    nearestIdx = max(1, min(numel(binArcIdx), nearestIdx));
-
-                    thisBins = binArcIdx(nearestIdx);
-                    thisBins(thisBins == 0) = nbins + 1;   % safety guard
-
-                    thisEventData(valid) = midPoints(thisBins);
-                    thisWeights(valid)   = arcDensity(thisBins);
-                end
-
-                % Write into each label bucket
-                presentGroups = unique(thisGroup);
-                for kk = 1:numel(presentGroups)
-                    gidx = presentGroups(kk);
-                    m = (thisGroup == gidx);
-                    n = nnz(m);
-
-                    idx = writePos(gidx):(writePos(gidx) + n - 1);
-                    eventData{gidx}(idx) = thisEventData(m);
-                    weights{gidx}(idx)   = thisWeights(m);
-
-                    writePos(gidx) = writePos(gidx) + n;
-                end
-            end
-
-            % KDE
-            npoints = 50;
-            f  = nan(numel(evtLbl), npoints);
-            xi = nan(numel(evtLbl), npoints);
-
-            for ee = 1:numel(evtLbl)
-                valid = ~isnan(eventData{ee}) & ~isnan(weights{ee}) & (weights{ee} > 0);
-
-                if nnz(valid) < 2
-                    continue
-                end
-
-                [f(ee,:), xi(ee,:)] = ksdensity(eventData{ee}(valid), ...
-                    Weights = 1 ./ weights{ee}(valid), ...
-                    NumPoints = npoints, ...
-                    Bandwidth = "normal-approx", ...
-                    Support = [0-eps 1+eps], ...
-                    BoundaryCorrection = "reflection");
-            end
-
-            plotLbl = categorical(repelem(evtLbl(:), 1,npoints));
-            % plotMask = isfinite(xi(:)) & isfinite(f(:));
-
-            g = gramm(x = xi(:), y = f(:), color = plotLbl(:));
+            g = gramm(x = xPlot(mask), y = yPlot(mask), color = plotLbl(mask));
             g.geom_line();
-            g.set_names(x = "Normalized arclength", color = "events");
+            g.set_names(x = "Normalized arclength", y = "Density", color = "events");
             g.set_title(tit);
             g.draw();
         end
-   
     end
 
     %% Class data preview
@@ -1942,7 +2107,7 @@ classdef NeuralEmbedding < handle & ...
             
             fprintf(1,repmat('\b',1,13));
             fprintf(1,'projecting');
-            currentAmask = unique(obj.Area(obj.aMask));
+            currentAmask = unique(obj.Area(any(obj.aMask,2)));
             for ar = obj.UArea(:)'
                 obj.aMask = ar;
                 E = ...
