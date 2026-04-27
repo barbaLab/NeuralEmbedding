@@ -190,7 +190,7 @@ for ss = 1:nSess
     S = objs(ss).S;
     S = S(:, 1);  % first area column
     T = sum(cellfun(@(s) size(s, 2), S));
-    if numel(y) == sum(arrayfun(@(o) o.nTrial, objs))
+    if numel(y) == sum([objs.nTrial])
         % Trial-level labels: take the right slice
         T = objs(ss).nTrial;
     end

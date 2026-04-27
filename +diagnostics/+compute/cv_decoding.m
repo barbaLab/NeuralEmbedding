@@ -133,7 +133,8 @@ end
 % =========================================================================
 
 function foldIdx = i_kfold_stratified(y, k)
-% Stratified k-fold: attempts equal class representation in each fold.
+% Stratified k-fold: ensures each class is distributed across folds.
+% Uses floor() with explicit remainder handling for consistent fold sizes.
 classes  = unique(y);
 T        = numel(y);
 foldIdx  = zeros(T, 1);
@@ -141,13 +142,18 @@ for cc = 1:numel(classes)
     idx = find(y == classes(cc));
     idx = idx(randperm(numel(idx)));
     n   = numel(idx);
+    base   = floor(n / k);   % minimum samples per fold for this class
+    extras = n - base * k;   % number of folds that get one extra sample
+    lo = 1;
     for ff = 1:k
-        lo = round((ff-1)*n/k) + 1;
-        hi = round(ff*n/k);
-        foldIdx(idx(lo:hi)) = ff;
+        hi = lo + base - 1 + (ff <= extras);
+        if lo <= n
+            foldIdx(idx(lo:min(hi,n))) = ff;
+        end
+        lo = hi + 1;
     end
 end
-% Handle any zeros left (shouldn't happen with above logic)
+% Assign any unassigned samples (edge case: fewer samples than folds)
 unassigned = find(foldIdx == 0);
 for ii = 1:numel(unassigned)
     foldIdx(unassigned(ii)) = mod(ii-1, k) + 1;

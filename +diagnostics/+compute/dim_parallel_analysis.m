@@ -86,7 +86,9 @@ end
 % Global z-score (appropriate for dimension selection)
 X = zscore(X, 0, 1);  % zero-mean unit-variance per column
 
-% Cap dims at min(T,N)-1
+% Cap dims at min(T,N)-1.
+% After mean-centering, the rank of X is at most min(T,N)-1, so at most
+% that many non-zero eigenvalues exist.
 maxDim = min(T, N) - 1;
 dims   = dims(dims <= maxDim);
 if isempty(dims)
