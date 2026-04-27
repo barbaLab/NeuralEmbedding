@@ -8,12 +8,30 @@ function [E,W,VarExplained] = findEmbedding(obj,type, projectOnly)
 %
 % The output is the embedded data, the projection matrix, and the
 % explained variance ratio.
+%
+% When called on a non-scalar NeuralEmbedding array the behaviour depends
+% on the algorithm:
+%   - MCCA : all objects are processed jointly (cross-session alignment).
+%   - All other algorithms : the embedding is computed independently for
+%                            each object in the array and stored back in
+%                            the respective object. The output arguments
+%                            contain the per-object results in cell arrays.
 
 % flag keeps track of whether the algorithm succeeded or not
 flag = true;
 
 if nargin<3
     projectOnly = false;
+end
+
+% For non-scalar arrays, apply non-alignment methods to each object
+% independently. MCCA is handled inside its own switch-case block.
+if ~isscalar(obj) && ~any(strcmpi(deblank(type), {'mcca'}))
+    arrayfun(@(o) findEmbedding(o, type, projectOnly), obj);
+    E            = arrayfun(@(o) o.E,            obj, 'UniformOutput', false);
+    W            = arrayfun(@(o) o.W,            obj, 'UniformOutput', false);
+    VarExplained = arrayfun(@(o) o.VarExplained, obj, 'UniformOutput', false);
+    return;
 end
 
 % switch through the different algorithms
