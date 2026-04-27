@@ -1212,6 +1212,18 @@ classdef NeuralEmbedding < handle & ...
          flag = computeMetrics(obj,type)
     end
 
+    %% Manifold diagnostics
+    methods (Access=public)
+        % Shuffle-based dimension selection (parallel analysis)
+        results = selectDimension(obj, dims, pars)
+        % Cross-validated PCA reconstruction
+        results = crossValReconstruct(obj, dim, pars)
+        % Cross-validated decoding + permutation test
+        results = crossValDecode(obj, y, dim, pars)
+        % Align latent spaces across sessions via Procrustes
+        results = alignSessions(obj, pars)
+    end
+
     %% Plot data
     methods
         function plot3(obj,maxT,eventToPlot)

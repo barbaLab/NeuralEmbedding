@@ -6,6 +6,7 @@
 
 - **Dimensionality Reduction Techniques**: Apply various algorithms to reduce the dimensionality of spiking neural data, helping to uncover underlying neural dynamics.
 - **Evaluation Metrics**: Utilize built-in metrics to assess the effectiveness and quality of the generated embeddings.
+- **Manifold Diagnostics**: Validate reconstructed latent spaces with shuffle-based dimension selection, cross-validated reconstruction, permutation-tested decoding, and Procrustes alignment across sessions.
 - **Flexible and Extensible**: The library is designed to be flexible, allowing for easy integration with existing workflows and extending with new methods.
 
 ## Installation
@@ -42,6 +43,29 @@ NE.computeMetrics("arc");
 ## Documentation
 
 For detailed documentation and examples, please refer to the [Wiki](https://github.com/barbaLab/NeuralEmbedding/wiki).
+
+### Manifold Diagnostics
+
+The library includes a **manifold diagnostic toolkit** for validating latent-space quality.
+See [`docs/manifold_diagnostics.md`](docs/manifold_diagnostics.md) for the full guide.
+
+Quick-start (single session):
+
+```matlab
+% Dimension selection via parallel analysis
+resA = NE.selectDimension(1:15);
+fprintf('Selected dim: %d\n', resA.dStar);
+
+% Cross-validated reconstruction
+resB = NE.crossValReconstruct(resA.dStar);
+
+% Cross-validated decoding + permutation test
+resC = NE.crossValDecode(y_trial, resA.dStar);
+fprintf('Acc=%.1f%%  p=%.4f\n', resC.accMean*100, resC.pValue);
+
+% Multi-session alignment (accepts NeuralEmbedding object array)
+resD = alignSessions([NE1, NE2, NE3]);
+```
 
 ## Contributing
 
