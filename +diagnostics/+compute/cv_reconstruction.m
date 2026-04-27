@@ -136,13 +136,11 @@ end
 
 function [W, scores] = i_pca_fit(X, dim)
 % Fit PCA on X (already z-scored), return loading matrix W (N x dim).
-X = X - mean(X, 1);              % centre
-[U, ~, ~] = svd(X, 'econ');      % U: T x rank
-C = (X' * X) / (size(X, 1) - 1);
-[V, ~]    = eig(C);               % V: N x N, eigenvalues ascending
-V = fliplr(V);                    % descending order
-W = V(:, 1:dim);                  % N x dim
-scores = X * W;                   % T x dim
+X = X - mean(X, 1);                   % centre
+[~, ~, V] = svd(X, 'econ');           % V: N x rank, singular vectors
+dim = min(dim, size(V, 2));
+W      = V(:, 1:dim);                  % N x dim
+scores = X * W;                        % T x dim
 end
 
 function r = i_pearson(a, b)

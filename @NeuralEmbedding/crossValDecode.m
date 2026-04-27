@@ -110,7 +110,7 @@ switch pars.permMode
         permuterFcn = @(Xp, yp) diagnostics.shufflers.global_permute(Xp, yp);
     case 'blocked'
         % Use trial index as block
-        blockId     = i_trial_block_ids(y, obj);
+        blockId     = i_trial_block_ids(obj);
         permuterFcn = @(Xp, yp) diagnostics.shufflers.blocked_permute(Xp, yp, blockId);
     case 'timeshift'
         permuterFcn = @(Xp, yp) diagnostics.shufflers.circular_shift(Xp, yp);
@@ -165,7 +165,7 @@ if numel(y) == nTr
 end
 end
 
-function blockId = i_trial_block_ids(~, obj)
+function blockId = i_trial_block_ids(obj)
 % Return a T-length vector where each element is the trial index of that
 % time bin — used as block IDs for blocked_permute.
 S = obj.S;

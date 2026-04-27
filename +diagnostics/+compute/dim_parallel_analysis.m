@@ -102,8 +102,8 @@ eigReal = eigReal(dims);
 eigNull = zeros(nShuffle, numel(dims));
 for ss = 1:nShuffle
     Xshuf = i_shuffle(X, mode);
-    eigNull(ss, :) = i_pca_eigs(Xshuf, max(dims));
-    eigNull(ss, :) = eigNull(ss, dims);
+    eigs_all = i_pca_eigs(Xshuf, max(dims));
+    eigNull(ss, :) = eigs_all(dims);
 end
 
 % --- Null quantile and dimension selection ---
@@ -135,14 +135,13 @@ end
 
 function eigs = i_pca_eigs(X, maxK)
 % Return eigenvalues (descending) for the first maxK components.
-% Uses SVD for numerical stability; no toolbox needed.
+% Uses economy SVD of centred X for numerical stability; no toolbox needed.
 [T, N] = size(X);
 maxK   = min(maxK, min(T, N) - 1);
-X      = X - mean(X, 1);           % centre columns
-C      = (X' * X) / (T - 1);       % covariance
-[~, S, ~] = svd(C, 'econ');
-eigs   = diag(S)';                  % eigenvalues descending
-eigs   = eigs(1:maxK);
+X      = X - mean(X, 1);               % centre columns
+[~, S, ~] = svd(X, 'econ');            % singular values descending
+sv     = diag(S);
+eigs   = (sv(1:maxK).^2 / (T - 1))';  % convert to eigenvalues
 end
 
 function Xout = i_shuffle(X, mode)

@@ -156,12 +156,10 @@ end
 
 function W = i_pca_fit(X, dim)
 % Fit PCA on centred X; return loadings W (N x dim).
-X = X - mean(X, 1);
-C = (X' * X) / max(size(X, 1) - 1, 1);
-[V, D] = eig(C);
-[~, ord] = sort(diag(D), 'descend');
-V = V(:, ord);
-W = V(:, 1:dim);
+X   = X - mean(X, 1);
+[~, ~, V] = svd(X, 'econ');    % V: N x rank, columns = principal directions
+dim = min(dim, size(V, 2));
+W   = V(:, 1:dim);
 end
 
 function yhat = i_nearest_centroid(Ztrain, ytrain, Ztest, classes)
