@@ -73,6 +73,9 @@ results = diagnostics.compute.cv_reconstruction(X, dim, pars);
 % --- Attach metadata ---
 results.animal  = obj.Animal;
 results.session = obj.Session;
+
+% --- Store in M_ ---
+obj.i_storeM(results, 'CVReconstruction');
 end
 
 % =========================================================================

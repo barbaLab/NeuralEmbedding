@@ -91,6 +91,9 @@ results = diagnostics.compute.dim_parallel_analysis(X, dims, pars);
 % --- Attach metadata ---
 results.animal  = obj.Animal;
 results.session = obj.Session;
+
+% --- Store in M_ ---
+obj.i_storeM(results, 'ParallelAnalysis');
 end
 
 % =========================================================================

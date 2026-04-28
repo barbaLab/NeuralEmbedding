@@ -133,6 +133,9 @@ results.nPerm     = pars.nPerm;
 results.permMode  = pars.permMode;
 results.animal    = obj.Animal;
 results.session   = obj.Session;
+
+% --- Store in M_ ---
+obj.i_storeM(results, 'CVDecoding');
 end
 
 % =========================================================================

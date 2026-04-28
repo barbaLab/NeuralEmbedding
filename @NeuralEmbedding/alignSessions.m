@@ -1,21 +1,29 @@
 function results = alignSessions(objs, pars)
-%ALIGNSESSIONS Align latent spaces across sessions using Procrustes.
+%ALIGNSESSIONS Align latent spaces across sessions using Procrustes, and
+%              store the aligned subspaces within each NeuralEmbedding object.
 %
-%   RESULTS = ALIGNSESSIONS(OBJS) aligns the latent embeddings of all
-%   sessions in the NeuralEmbedding array OBJS to the first session
+%   RESULTS = ALIGNSESSIONS(OBJS) aligns the latent embeddings of every
+%   session in the NeuralEmbedding array OBJS to the first session
 %   (reference session = 1) using orthogonal Procrustes analysis.
+%   Alignment is performed *independently* for every area present in the
+%   reference session (including "AllNeurons").
+%
+%   After this call:
+%     - Each object's E_aligned_ and W_aligned_ private properties are
+%       populated with the rotation-transformed embeddings.
+%     - Setting OBJ.useAlignment = true makes get.E and get.W return the
+%       aligned subspace instead of the original one.
+%     - Each object's M_ is updated with an 'Alignment' entry (same logic
+%       as computeMetrics; re-running replaces the previous result).
 %
 %   RESULTS = ALIGNSESSIONS(OBJS, PARS) overrides default alignment
 %   parameters via the struct PARS. See diagnostics.pars.ProcrustesAlignment.
 %
-%   Each session must have already had findEmbedding called. The latent
-%   space used is the embedded data matrix E (first numPC components,
-%   concatenated across trials).
-%
 %   Inputs
 %   ------
 %   objs : (1 x nSessions) or (nSessions x 1) NeuralEmbedding array.
-%          At least 2 objects required.
+%          At least 2 objects required.  Each object must have had
+%          findEmbedding called prior to alignment.
 %   pars : struct with optional fields (see diagnostics.pars.ProcrustesAlignment):
 %          .allowScale  (default false) - allow isotropic scaling.
 %          .refSession  (default 1)     - index of reference session.
@@ -23,36 +31,45 @@ function results = alignSessions(objs, pars)
 %   Outputs
 %   -------
 %   results : struct with fields
-%       .Z           - cell array {1 x nSessions} of original latent matrices.
-%       .Z_aligned   - cell array {1 x nSessions} of aligned latent matrices.
-%       .R           - cell array {1 x nSessions} of rotation matrices
-%                      (identity for the reference session).
-%       .scale       - (1 x nSessions) scale factors.
-%       .disparity   - (1 x nSessions) Procrustes disparity per session.
-%       .principalAngles - cell {1 x nSessions} principal-angle vectors.
-%       .meanPrincipalAngle - (1 x nSessions) mean principal angle (rad).
-%       .distCorr    - (1 x nSessions) Mantel distance correlation.
-%       .refSession  - index of reference session used.
-%       .sessions    - string array of session labels.
-%       .animals     - string array of animal labels.
+%       .Z              - {nAreas x nSessions} original latent matrices.
+%       .Z_aligned      - {nAreas x nSessions} rotation-only aligned latents.
+%       .R              - {nAreas x nSessions} rotation matrices.
+%       .scale          - (nAreas x nSessions) isotropic scale factors.
+%       .disparity      - (nAreas x nSessions) Procrustes disparity.
+%       .principalAngles - {nAreas x nSessions} principal-angle vectors.
+%       .meanPrincipalAngle - (nAreas x nSessions) mean principal angle (rad).
+%       .distCorr       - (nAreas x nSessions) Mantel distance correlation.
+%       .refSession     - index of reference session used.
+%       .areas          - string array of area labels (rows of per-area fields).
+%       .sessions       - string array of session labels.
+%       .animals        - string array of animal labels.
+%
+%   Object side-effects
+%   -------------------
+%   Per object OBJ = OBJS(ss):
+%     - OBJ.E_aligned_  is populated with the rotation-transformed embedding.
+%     - OBJ.W_aligned_  is populated with the rotation-transformed loadings.
+%     - OBJ.M_ receives an 'Alignment' entry via i_storeM.
+%   To activate the aligned subspace set OBJ.useAlignment = true.
+%   To deactivate set OBJ.useAlignment = false.
 %
 %   Notes
 %   -----
-%   * Alignment is performed on the concatenated (trial-stacked) embedded
-%     data from the first (alphabetically ordered) matching conditions.
-%   * Sessions must share the same embedding dimensionality (numPC).
-%   * If sessions differ in the number of time bins, the shorter session
-%     is padded / truncated to match the reference for metric computation
-%     only; the full Z_aligned is always returned at native length.
+%   * The rotation is applied without global re-centring so that the
+%     per-trial mean structure of E is preserved.
+%   * Only the first numPC components of E (and W) are rotated; higher
+%     components (if stored) are left unchanged.
+%   * If two sessions do not share the same area label, that area is
+%     skipped for the non-matching session.
 %
 %   Example
 %   -------
 %   NEs = [NE1, NE2, NE3];
-%   NE1.findEmbedding('PCA');
-%   NE2.findEmbedding('PCA');
+%   NE1.findEmbedding('PCA');  NE2.findEmbedding('PCA');
 %   NE3.findEmbedding('PCA');
 %   res = alignSessions(NEs);
-%   disp(res.disparity)   % per-session Procrustes disparity
+%   disp(res.disparity)          % nAreas x nSessions matrix
+%   NE2.useAlignment = true;     % activate aligned subspace for session 2
 %
 %   See also diagnostics.compute.align_procrustes,
 %            diagnostics.compute.alignment_metrics,
@@ -75,66 +92,138 @@ end
 nSess   = numel(objs);
 refSess = pars.refSession;
 
-% --- Extract latent matrices ---
-Z = cell(1, nSess);
+% Area list from reference session (includes "AllNeurons")
+refAreas = objs(refSess).UArea;   % (nAreas+1 x 1) string
+nAreas   = numel(refAreas);
+
+% --- Initialise aligned storage (deep-copy of current E_ / W_) ---
 for ss = 1:nSess
-    Z{ss} = i_get_latent(objs(ss));
+    objs(ss).E_aligned_ = objs(ss).E_;   % value-copy of cell array
+    objs(ss).W_aligned_ = objs(ss).W_;
 end
 
-% --- Align to reference ---
-Zref = Z{refSess};
-d    = size(Zref, 2);
+% --- Pre-allocate per-area per-session results ---
+R_all        = cell(nAreas, nSess);
+scale_all    = ones(nAreas, nSess);
+disparity    = zeros(nAreas, nSess);
+pAngles      = cell(nAreas, nSess);
+meanPAngle   = zeros(nAreas, nSess);
+distCorr     = ones(nAreas, nSess);
+Z_all        = cell(nAreas, nSess);
+Z_aligned_all = cell(nAreas, nSess);
 
-Z_aligned   = cell(1, nSess);
-R_all       = cell(1, nSess);
-scale_all   = zeros(1, nSess);
-disparity   = zeros(1, nSess);
-pAngles     = cell(1, nSess);
-meanPAngle  = zeros(1, nSess);
-distCorr    = zeros(1, nSess);
+% Fill identity values for reference session now
+for aa = 1:nAreas
+    R_all{aa, refSess}     = [];   % filled below once d is known
+    scale_all(aa, refSess) = 1;
+    disparity(aa, refSess) = 0;
+    pAngles{aa, refSess}   = [];
+    meanPAngle(aa, refSess) = 0;
+    distCorr(aa, refSess)  = 1;
+end
 
-for ss = 1:nSess
-    if ss == refSess
-        Z_aligned{ss}  = Zref - mean(Zref, 1);
-        R_all{ss}      = eye(d);
-        scale_all(ss)  = 1.0;
-        disparity(ss)  = 0;
-        pAngles{ss}    = zeros(1, d);
-        meanPAngle(ss) = 0;
-        distCorr(ss)   = 1;
-        continue;
+% --- Per-area alignment ---
+for aa = 1:nAreas
+    areaStr = refAreas(aa);
+
+    % Locate area column in reference session E_
+    aaRef = find(ismember(objs(refSess).UArea, areaStr));
+    if isempty(aaRef), continue; end
+
+    % Extract all non-empty trial cells for this area from reference
+    E_ref_all = objs(refSess).E_(:, aaRef);   % nTrial_ref x 1
+    valid_ref  = ~cellfun(@(e) isempty(e) || size(e,2)==0, E_ref_all);
+    if ~any(valid_ref), continue; end
+
+    E_ref_cells = E_ref_all(valid_ref);
+    d_ref = min(objs(refSess).numPC, size(E_ref_cells{1}, 1));
+
+    % Concatenate reference latent: T_ref x d
+    Zref = cell2mat(cellfun(@(e) e(1:d_ref,:)', ...
+        E_ref_cells, 'UniformOutput', false));   % T_ref x d_ref
+    Z_all{aa, refSess}        = Zref;
+    Z_aligned_all{aa, refSess} = Zref;
+    R_all{aa, refSess}         = eye(d_ref);
+
+    for ss = 1:nSess
+        if ss == refSess, continue; end
+
+        % Locate matching area in this session
+        aaSess = find(ismember(objs(ss).UArea, areaStr));
+        if isempty(aaSess)
+            % Area not present in this session: no alignment possible
+            R_all{aa, ss} = eye(d_ref);
+            continue;
+        end
+
+        E_ss_all  = objs(ss).E_(:, aaSess);
+        valid_ss   = ~cellfun(@(e) isempty(e) || size(e,2)==0, E_ss_all);
+        if ~any(valid_ss)
+            R_all{aa, ss} = eye(d_ref);
+            continue;
+        end
+
+        E_ss_cells = E_ss_all(valid_ss);
+        d_ss = min([objs(ss).numPC, size(E_ss_cells{1}, 1), d_ref]);
+
+        % Concatenate session latent: T_ss x d_ss
+        Z_ss = cell2mat(cellfun(@(e) e(1:d_ss,:)', ...
+            E_ss_cells, 'UniformOutput', false));
+        Z_all{aa, ss} = Z_ss;
+
+        % Common length for Procrustes fit
+        Tcommon = min(size(Zref, 1), size(Z_ss, 1));
+        Zref_c  = Zref(1:Tcommon, 1:d_ss);
+        Zss_c   = Z_ss(1:Tcommon, :);
+
+        % Compute Procrustes alignment
+        procResult = diagnostics.compute.align_procrustes(Zref_c, Zss_c, ...
+            pars.allowScale);
+        R  = procResult.R;    % d_ss x d_ss orthogonal
+        sc = procResult.scale;
+
+        R_all{aa, ss}     = R;
+        scale_all(aa, ss) = sc;
+
+        % ----- Apply rotation to ALL trials of this session (in-place) -----
+        % E cell is (d_full x T); rotate first d_ss rows: E_rot = sc * R' * E(1:d_ss,:)
+        % R is orthogonal, so R' = inv(R).
+        % Working on the private E_aligned_ (already initialised as copy of E_).
+        E_tmp = objs(ss).E_aligned_;
+        for tr = 1:size(E_tmp, 1)
+            Ec = E_tmp{tr, aaSess};
+            if isempty(Ec) || size(Ec,2) == 0, continue; end
+            nrows = min(d_ss, size(Ec, 1));
+            Ec(1:nrows, :) = sc * (R' * Ec(1:nrows, :));
+            E_tmp{tr, aaSess} = Ec;
+        end
+        objs(ss).E_aligned_ = E_tmp;
+
+        % Apply rotation to W for this area
+        Wss = objs(ss).W_aligned_{aaSess};
+        if ~isempty(Wss)
+            nrows_W = min(d_ss, size(Wss, 1));
+            Wss(1:nrows_W, :) = sc * (R' * Wss(1:nrows_W, :));
+            objs(ss).W_aligned_{aaSess} = Wss;
+        end
+
+        % Aligned Z at full session length (rotation-only, no centring)
+        Z_aligned_all{aa, ss} = cell2mat(cellfun(@(e) ...
+            (sc * (R' * e(1:d_ss,:)))', E_ss_cells, 'UniformOutput', false));
+
+        % Alignment metrics on the common (Procrustes-fitted) portion
+        metResult         = diagnostics.compute.alignment_metrics(Zref_c, ...
+            procResult.Z2_aligned);
+        disparity(aa, ss)    = metResult.disparity;
+        pAngles{aa, ss}      = metResult.principalAngles;
+        meanPAngle(aa, ss)   = metResult.meanPrincipalAngle;
+        distCorr(aa, ss)     = metResult.distCorr;
     end
-
-    % Truncate or pad to min common length for Procrustes fit
-    T1 = size(Zref, 1);
-    T2 = size(Z{ss}, 1);
-    Tcommon = min(T1, T2);
-    Zref_common = Zref(1:Tcommon, :);
-    Zsess_common = Z{ss}(1:Tcommon, :);
-
-    % Align common portion
-    procResult = diagnostics.compute.align_procrustes(Zref_common, ...
-        Zsess_common, pars.allowScale);
-
-    R_all{ss}     = procResult.R;
-    scale_all(ss) = procResult.scale;
-    disparity(ss) = procResult.disparity;
-
-    % Apply transform to full session
-    Zc = Z{ss} - mean(Z{ss}, 1);
-    Z_aligned{ss} = scale_all(ss) * Zc * R_all{ss};
-
-    % Alignment metrics on common portion
-    metResult      = diagnostics.compute.alignment_metrics(Zref_common, ...
-        procResult.Z2_aligned);
-    pAngles{ss}    = metResult.principalAngles;
-    meanPAngle(ss) = metResult.meanPrincipalAngle;
-    distCorr(ss)   = metResult.distCorr;
 end
 
-% --- Pack results ---
-results.Z                  = Z;
-results.Z_aligned          = Z_aligned;
+% --- Pack top-level results ---
+results.Z                  = Z_all;
+results.Z_aligned          = Z_aligned_all;
 results.R                  = R_all;
 results.scale              = scale_all;
 results.disparity          = disparity;
@@ -142,14 +231,20 @@ results.principalAngles    = pAngles;
 results.meanPrincipalAngle = meanPAngle;
 results.distCorr           = distCorr;
 results.refSession         = refSess;
+results.areas              = refAreas;
 results.sessions           = string({objs.Session});
 results.animals            = string({objs.Animal});
-end
 
-% =========================================================================
-function Z = i_get_latent(obj)
-% Concatenate embedded trials into T x d matrix (first area column).
-E = obj.E;
-E = E(:, 1);  % first area column
-Z = cell2mat(cellfun(@(e) e', E, 'UniformOutput', false));
+% --- Store per-session result in each object's M_ ---
+for ss = 1:nSess
+    sessData.R                  = R_all(:, ss);
+    sessData.scale              = scale_all(:, ss);
+    sessData.disparity          = disparity(:, ss);
+    sessData.principalAngles    = pAngles(:, ss);
+    sessData.meanPrincipalAngle = meanPAngle(:, ss);
+    sessData.distCorr           = distCorr(:, ss);
+    sessData.refSession         = refSess;
+    sessData.areas              = refAreas;
+    objs(ss).i_storeM(sessData, 'Alignment');
+end
 end

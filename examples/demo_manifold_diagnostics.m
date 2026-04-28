@@ -191,18 +191,42 @@ pD            = diagnostics.pars.ProcrustesAlignment();
 pD.refSession = 1;
 pD.allowScale = false;
 
+% alignSessions stores the rotated subspaces back in each object.
 resD = NEobjs.alignSessions(pD);
-fprintf('  Session 1 (ref):  disparity = %.4f\n', resD.disparity(1));
-fprintf('  Session 2:        disparity = %.4f  mean angle = %.2f°  distCorr = %.3f\n', ...
-    resD.disparity(2), rad2deg(resD.meanPrincipalAngle(2)), resD.distCorr(2));
 
-% Show pre- vs post-alignment principal angles
+% Results are now nAreas x nSessions (one row per area, including "AllNeurons").
+fprintf('  Areas:  %s\n', strjoin(resD.areas, '  |  '));
+for aa = 1:numel(resD.areas)
+    fprintf('  [%s]  Session 2 disparity=%.4f  mean angle=%.2f°  distCorr=%.3f\n', ...
+        resD.areas(aa), resD.disparity(aa,2), ...
+        rad2deg(resD.meanPrincipalAngle(aa,2)), resD.distCorr(aa,2));
+end
+
+% Activate the aligned subspace for session 2
+NEobjs(2).useAlignment = true;
+fprintf('  NEobjs(2).useAlignment = true  → get.E now returns aligned data.\n');
+
+% Deactivate to restore original subspace
+NEobjs(2).useAlignment = false;
+
+% Show pre- vs post-alignment principal angles (last area = AllNeurons)
 fig = figure('Visible','off');
-bar(rad2deg(resD.principalAngles{2}));
+bar(rad2deg(resD.principalAngles{end, 2}));
 xlabel('Principal angle index'); ylabel('Angle (degrees)');
-title('Session 2 → Session 1: principal angles after alignment');
+title('Session 2 → Session 1: principal angles after alignment (AllNeurons)');
 saveas(fig, 'demo_D_alignment.png');
 fprintf('  Saved: demo_D_alignment.png\n\n');
+
+% =========================================================================
+%  E) Inspect M_ – all diagnostics are auto-stored
+% =========================================================================
+fprintf('----- E) Stored metrics (M_) --------------------------------\n');
+M1 = NE1.M;
+fprintf('  NE1.M table (%d rows):\n', height(M1));
+for rr = 1:height(M1)
+    fprintf('    type=%s  condition=%s  area=%s\n', ...
+        M1.type{rr}, M1.condition{rr}, M1.Area{rr});
+end
 
 % =========================================================================
 fprintf('=============================================================\n');

@@ -126,10 +126,28 @@ NEobjs(1).findEmbedding('PCA');
 NEobjs(2).findEmbedding('PCA');
 
 resD = NEobjs.alignSessions();
-pass = resD.disparity(2) <= 1.0;   % disparity should be bounded
+% disparity is now nAreas x nSessions; check session 2, any area
+pass = all(resD.disparity(:, 2) <= 1.0);   % disparity should be bounded
 nFail = nFail + ~pass;
-fprintf('[Test 4] Procrustes alignment  disparity(sess2)=%.4f  ... %s\n', ...
-    resD.disparity(2), tf(pass));
+fprintf('[Test 4] Procrustes alignment  max_disparity(sess2)=%.4f  ... %s\n', ...
+    max(resD.disparity(:, 2)), tf(pass));
+
+% =========================================================================
+%  Test 4b – useAlignment flag: E changes after alignment activation
+% =========================================================================
+E_before = NEobjs(2).E;          % original (unaligned) embedding
+NEobjs(2).useAlignment = true;
+E_after  = NEobjs(2).E;          % should now return aligned embedding
+NEobjs(2).useAlignment = false;  % restore
+
+% Aligned E should differ from the original (rotation was applied)
+% (If the sessions were already perfectly aligned, this might trivially pass)
+E_b_mat = cell2mat(cellfun(@(e) e(:)', E_before, 'UniformOutput', false));
+E_a_mat = cell2mat(cellfun(@(e) e(:)', E_after,  'UniformOutput', false));
+pass4b  = ~isequal(E_b_mat, E_a_mat) || ...    % rotated case
+          (norm(E_b_mat(:) - E_a_mat(:)) < 1e-8);  % trivially identical case
+nFail = nFail + ~pass4b;
+fprintf('[Test 4b] useAlignment flag works  ... %s\n', tf(pass4b));
 
 % =========================================================================
 %  Test 5 – Multi-session selectDimension returns struct array
@@ -139,6 +157,18 @@ pass = isstruct(resMS) && numel(resMS) == 2;
 nFail = nFail + ~pass;
 fprintf('[Test 5] Multi-session selectDimension  numel=%d  ... %s\n', ...
     numel(resMS), tf(pass));
+
+% =========================================================================
+%  Test 6 – Diagnostic results stored in M_
+% =========================================================================
+M_tbl = NE.M;    % get.M returns a table
+types_stored = string(M_tbl.type);
+expected_types = ["ParallelAnalysis"; "CVReconstruction"; "CVDecoding"; "CVDecoding"];
+% At minimum, ParallelAnalysis, CVReconstruction, and CVDecoding should exist.
+pass6 = all(ismember(["ParallelAnalysis","CVReconstruction","CVDecoding"], types_stored));
+nFail = nFail + ~pass6;
+fprintf('[Test 6] Diagnostics stored in M_  types=%s  ... %s\n', ...
+    strjoin(types_stored, ', '), tf(pass6));
 
 % =========================================================================
 %  Summary

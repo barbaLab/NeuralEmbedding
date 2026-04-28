@@ -32,10 +32,14 @@ y_trial = ...; % trial-level integer labels
 resC = NE.crossValDecode(y_trial, resA.dStar);
 fprintf('Acc = %.1f%%  p = %.4f\n', resC.accMean*100, resC.pValue);
 
-% D) Align two sessions
+% D) Align two sessions and activate the aligned subspace
 NE1.findEmbedding('PCA'); NE2.findEmbedding('PCA');
 resD = alignSessions([NE1, NE2]);
-fprintf('Disparity = %.4f\n', resD.disparity(2));
+NE2.useAlignment = true;          % get.E / get.W now return aligned data
+fprintf('Disparity = %.4f\n', resD.disparity(end, 2));  % last area, session 2
+
+% Inspect stored results (all methods auto-save to M_)
+NE.M    % table with ParallelAnalysis, CVReconstruction, CVDecoding entries
 ```
 
 Multi-session methods accept an array of NeuralEmbedding objects and return a
@@ -178,11 +182,42 @@ about task labels / behaviour variables, using a permutation-based null.
 Whether the latent geometry is consistent across sessions / animals.
 
 ### Method: orthogonal Procrustes
-For each non-reference session:
+For each non-reference session **and for every area** present in the reference:
 1. Centre both latent matrices.
 2. Solve `min ||Z_ref - Z_sess * R||_F` subject to `R'R = I` (orthogonal
    Procrustes) via SVD: `[U,S,V] = svd(Z_ref' * Z_sess); R = V * U'`.
 3. Optionally optimise an isotropic scale factor (`allowScale = true`).
+
+### Object-level side effects
+`alignSessions` stores results inside each object so it becomes **self-sufficient**:
+
+| What is stored | Where |
+|----------------|-------|
+| Rotated per-trial embeddings | Private `E_aligned_` (per area, per trial) |
+| Rotated projection matrix | Private `W_aligned_` (per area) |
+| Alignment quality metrics | `M_` via `i_storeM` (type = `'Alignment'`) |
+
+Once `alignSessions` has been called, toggling the public flag
+`OBJ.useAlignment = true` makes `OBJ.E` and `OBJ.W` return the **aligned**
+subspace instead of the original one, for all areas:
+
+```matlab
+NEobjs = [NE1, NE2, NE3];
+for ss = 1:3, NEobjs(ss).findEmbedding('PCA'); end
+res = alignSessions(NEobjs);       % stores aligned subspaces in each object
+
+NE2.useAlignment = true;           % activate for session 2
+E_aligned = NE2.E;                 % returns rotation-transformed embedding
+
+NE2.useAlignment = false;          % restore original
+E_original = NE2.E;
+```
+
+- Setting `useAlignment = true` before `alignSessions` has been called silently
+  falls back to the original embedding (no error, no data corruption).
+- `W_aligned_` is `[]` if no embedding was fitted yet.
+- The flag is **independent per object**, so you can activate it for a subset of
+  sessions (e.g. all non-reference sessions).
 
 ### Alignment metrics
 
@@ -191,6 +226,8 @@ For each non-reference session:
 | `disparity` | Normalised Frobenius distance | Closer to 0 |
 | `principalAngles` | Subspace angles (radians) between column spaces | Closer to 0 |
 | `distCorr` | Mantel correlation between pairwise distance matrices | Closer to 1 |
+
+Results are now `(nAreas × nSessions)` arrays/cell arrays, one row per area.
 
 ### Recommended defaults
 
@@ -212,13 +249,46 @@ pars = diagnostics.pars.ProcrustesAlignment();
 pars.refSession = 1;
 res = NEobjs.alignSessions(pars);
 
-% Per-session alignment summary
+% Per-session, per-area alignment summary
 for ss = 2:numel(NEobjs)
-    fprintf('Session %d: disparity=%.4f  meanAngle=%.2f°  distCorr=%.3f\n', ...
-        ss, res.disparity(ss), rad2deg(res.meanPrincipalAngle(ss)), ...
-        res.distCorr(ss));
+    for aa = 1:numel(res.areas)
+        fprintf('Session %d, Area %s: disparity=%.4f  meanAngle=%.2f°\n', ...
+            ss, res.areas(aa), res.disparity(aa,ss), ...
+            rad2deg(res.meanPrincipalAngle(aa,ss)));
+    end
+end
+
+% Activate aligned subspace for all non-reference sessions
+for ss = 2:numel(NEobjs)
+    NEobjs(ss).useAlignment = true;
 end
 ```
+
+---
+
+## Result storage in M_
+
+All three scalar diagnostic methods automatically store their output in the
+object's `M_` property using the same replace-or-append logic as
+`computeMetrics`:
+
+| Method | M_ type field |
+|--------|--------------|
+| `selectDimension` | `'ParallelAnalysis'` |
+| `crossValReconstruct` | `'CVReconstruction'` |
+| `crossValDecode` | `'CVDecoding'` |
+| `alignSessions` (per session) | `'Alignment'` |
+
+```matlab
+NE.selectDimension(1:15);
+NE.crossValReconstruct(5);
+M = NE.M;    % returns table with all stored metrics
+M.type       % ["ParallelAnalysis"; "CVReconstruction"]
+M.data{1}    % the full results struct for ParallelAnalysis
+```
+
+Re-running any diagnostic with the same condition/area mask **replaces** the
+previous entry (no duplicates). Set `NE.appendM = true` to keep all runs.
 
 ---
 
@@ -270,10 +340,11 @@ decoder (e.g. SVM), you can supply a custom `statFcn` to
         circular_shift.m          % circular-shift permuter wrapper
 
 @NeuralEmbedding/
-    selectDimension.m             % class method – dimension selection
-    crossValReconstruct.m         % class method – CV reconstruction
-    crossValDecode.m              % class method – CV decoding
-    alignSessions.m               % class method – Procrustes alignment
+    selectDimension.m             % class method – dimension selection (auto-saves to M_)
+    crossValReconstruct.m         % class method – CV reconstruction (auto-saves to M_)
+    crossValDecode.m              % class method – CV decoding (auto-saves to M_)
+    alignSessions.m               % class method – Procrustes alignment (stores E_aligned_, W_aligned_, saves to M_)
+    i_storeM.m                    % private helper – update M_ with a diagnostic result
 
 examples/
     demo_manifold_diagnostics.m   % end-to-end demo script
