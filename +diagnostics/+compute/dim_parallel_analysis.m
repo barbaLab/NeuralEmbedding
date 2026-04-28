@@ -110,18 +110,21 @@ eigReal = eigReal(dims);
 % --- Null distribution ---
 if verbose
     if ~isempty(label)
-        fprintf(1, '\n  Parallel analysis [%s]: shuffle %d/%d', label, 0, nShuffle);
+        fprintf(1, '\n  Parallel analysis [%s]: shuffle 0/%d', label, nShuffle);
     else
-        fprintf(1, '\n  Parallel analysis: shuffle %d/%d', 0, nShuffle);
+        fprintf(1, '\n  Parallel analysis: shuffle 0/%d', nShuffle);
     end
 end
 eigNull = zeros(nShuffle, numel(dims));
+prevLen = 0;
 for ss = 1:nShuffle
     Xshuf = i_shuffle(X, mode);
     eigs_all = i_pca_eigs(Xshuf, max(dims));
     eigNull(ss, :) = eigs_all(dims);
     if verbose
-        fprintf(1, '\b\b\b\b\b\b\b\b\b\b\b\b\b%d/%d', ss, nShuffle);
+        msg = sprintf('%d/%d', ss, nShuffle);
+        fprintf(1, '%s%s', repmat(char(8), 1, prevLen), msg);
+        prevLen = numel(msg);
     end
 end
 if verbose

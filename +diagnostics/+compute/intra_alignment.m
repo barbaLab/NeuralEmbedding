@@ -112,14 +112,14 @@ distCorr_vec   = zeros(1, nSplit);
 
 if verbose
     if ~isempty(label)
-        fprintf(1, '\n  IntraAlignment [%s]: split %d/%d', label, 0, nSplit);
+        fprintf(1, '\n  IntraAlignment [%s]: split 0/%d', label, nSplit);
     else
-        fprintf(1, '\n  IntraAlignment: split %d/%d', 0, nSplit);
+        fprintf(1, '\n  IntraAlignment: split 0/%d', nSplit);
     end
 end
 
 halfN = floor(nTrials / 2);
-
+prevLen = 0;
 for sp = 1:nSplit
     % Random trial assignment
     perm   = randperm(nTrials);
@@ -154,7 +154,9 @@ for sp = 1:nSplit
     distCorr_vec(sp)   = metRes.distCorr;
 
     if verbose
-        fprintf(1, '\b\b\b\b\b\b\b\b\b\b\b\b\b%d/%d', sp, nSplit);
+        msg = sprintf('%d/%d', sp, nSplit);
+        fprintf(1, '%s%s', repmat(char(8), 1, prevLen), msg);
+        prevLen = numel(msg);
     end
 end
 

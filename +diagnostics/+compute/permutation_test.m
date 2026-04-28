@@ -72,17 +72,20 @@ statReal = statFcn(X, y);
 % Null distribution
 if verbose
     if ~isempty(label)
-        fprintf(1, '\n  Permutation test [%s]: perm %d/%d', label, 0, nPerm);
+        fprintf(1, '\n  Permutation test [%s]: perm 0/%d', label, nPerm);
     else
-        fprintf(1, '\n  Permutation test: perm %d/%d', 0, nPerm);
+        fprintf(1, '\n  Permutation test: perm 0/%d', nPerm);
     end
 end
 statNull = zeros(1, nPerm);
+prevLen = 0;
 for pp = 1:nPerm
     [Xp, yp]    = permuterFcn(X, y);
     statNull(pp) = statFcn(Xp, yp);
     if verbose
-        fprintf(1, '\b\b\b\b\b\b\b\b\b\b\b\b\b%d/%d', pp, nPerm);
+        msg = sprintf('%d/%d', pp, nPerm);
+        fprintf(1, '%s%s', repmat(char(8), 1, prevLen), msg);
+        prevLen = numel(msg);
     end
 end
 if verbose

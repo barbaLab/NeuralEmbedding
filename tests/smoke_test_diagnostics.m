@@ -231,7 +231,7 @@ fprintf('[Test 8a] labelsFromEvents  T=%d (expected %d)  ... %s\n', ...
 
 % Check that exactly half the bins are labelled 'Cue'
 nCue = sum(y_evts == 'Cue');
-nExpCue = nTrials * (Ttrial - floor(Ttrial/2));
+nExpCue = nTrials * (Ttrial - floor(Ttrial/2) + 1);
 pass8b = (nCue == nExpCue);
 nFail  = nFail + ~pass8b;
 fprintf('[Test 8b] labelsFromEvents  nCue=%d (expected %d)  ... %s\n', ...
