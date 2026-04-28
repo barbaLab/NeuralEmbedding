@@ -21,4 +21,5 @@ function pars = ProcrustesAlignment()
 
 pars.allowScale = false;
 pars.refSession = 1;
+pars.verbose    = true;
 end

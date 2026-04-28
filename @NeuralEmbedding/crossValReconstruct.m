@@ -67,6 +67,12 @@ end
 % --- Extract data ---
 X = i_get_data(obj);
 
+% --- Build label for progress output ---
+label = sprintf('%s.%s', obj.Animal, obj.Session);
+if pars.verbose
+    fprintf(1, '\nCrossValReconstruct [%s]  dim=%d', label, dim);
+end
+
 % --- Run CV reconstruction ---
 results = diagnostics.compute.cv_reconstruction(X, dim, pars);
 

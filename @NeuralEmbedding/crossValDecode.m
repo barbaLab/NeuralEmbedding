@@ -87,6 +87,12 @@ end
 % --- Extract data ---
 X = i_get_data(obj);
 
+% --- Build label for progress output ---
+label = sprintf('%s.%s', obj.Animal, obj.Session);
+if pars.verbose
+    fprintf(1, '\nCrossValDecode [%s]  dim=%d', label, dim);
+end
+
 % Expand trial-level labels to time-bin level if needed
 y = i_expand_labels(y, obj);
 
@@ -122,7 +128,7 @@ end
 statFcn = @(Xp, yp) diagnostics.compute.cv_decoding(Xp, yp, dim, decPars).accMean;
 
 permResult = diagnostics.compute.permutation_test(statFcn, permuterFcn, ...
-    X, y, pars.nPerm, pars.rngSeed);
+    X, y, pars.nPerm, pars.rngSeed, label, isfield(pars,'verbose') && pars.verbose);
 
 % --- Merge results ---
 results           = decodingResult;

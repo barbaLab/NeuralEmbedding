@@ -31,4 +31,5 @@ pars.nShuffle = 200;
 pars.alpha    = 0.05;
 pars.rngSeed  = 0;
 pars.mode     = 'neuronwise';
+pars.verbose  = true;
 end

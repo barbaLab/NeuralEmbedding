@@ -1237,6 +1237,10 @@ classdef NeuralEmbedding < handle & ...
         results = crossValDecode(obj, y, dim, pars)
         % Align latent spaces across sessions via Procrustes
         results = alignSessions(obj, pars)
+        % Within-session latent-space stability (random trial splits)
+        results = crossValAlignment(obj, pars)
+        % Build a per-time-bin label vector from stored events
+        y = labelsFromEvents(obj, eventNames)
     end
 
     %% Private helpers

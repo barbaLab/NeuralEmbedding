@@ -1,4 +1,4 @@
-function results = permutation_test(statFcn, permuterFcn, X, y, nPerm, rngSeed)
+function results = permutation_test(statFcn, permuterFcn, X, y, nPerm, rngSeed, label, verbose)
 %PERMUTATION_TEST Generic permutation test for decoding statistics.
 %
 %   RESULTS = diagnostics.compute.permutation_test(STATFCN, PERMUTERFCN,
@@ -21,6 +21,9 @@ function results = permutation_test(statFcn, permuterFcn, X, y, nPerm, rngSeed)
 %   y          : T x 1 label vector.
 %   nPerm      : positive integer, number of permutation replicates.
 %   rngSeed    : non-negative integer or [] (default 0).
+%   label      : (optional) string label shown in progress output, e.g.
+%                'Animal.Session'.  Defaults to ''.
+%   verbose    : (optional) logical (default true). Print progress.
 %
 %   Outputs
 %   -------
@@ -53,6 +56,12 @@ function results = permutation_test(statFcn, permuterFcn, X, y, nPerm, rngSeed)
 if nargin < 6 || isempty(rngSeed)
     rngSeed = 0;
 end
+if nargin < 7 || isempty(label)
+    label = '';
+end
+if nargin < 8 || isempty(verbose)
+    verbose = true;
+end
 if ~isempty(rngSeed)
     rng(rngSeed, 'twister');
 end
@@ -61,10 +70,23 @@ end
 statReal = statFcn(X, y);
 
 % Null distribution
+if verbose
+    if ~isempty(label)
+        fprintf(1, '\n  Permutation test [%s]: perm %d/%d', label, 0, nPerm);
+    else
+        fprintf(1, '\n  Permutation test: perm %d/%d', 0, nPerm);
+    end
+end
 statNull = zeros(1, nPerm);
 for pp = 1:nPerm
     [Xp, yp]    = permuterFcn(X, y);
     statNull(pp) = statFcn(Xp, yp);
+    if verbose
+        fprintf(1, '\b\b\b\b\b\b\b\b\b\b\b\b\b%d/%d', pp, nPerm);
+    end
+end
+if verbose
+    fprintf(1, ' done.\n');
 end
 
 % p-value (one-sided, Phipson & Smyth 2010)

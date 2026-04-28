@@ -1,4 +1,4 @@
-function results = dim_parallel_analysis(X, dims, pars)
+function results = dim_parallel_analysis(X, dims, pars, label)
 %DIM_PARALLEL_ANALYSIS Shuffle-based dimension selection (parallel analysis).
 %
 %   RESULTS = diagnostics.compute.dim_parallel_analysis(X, DIMS, PARS)
@@ -12,15 +12,18 @@ function results = dim_parallel_analysis(X, dims, pars)
 %
 %   Inputs
 %   ------
-%   X    : T x N matrix (T samples, N neurons/features). Must not contain
-%          NaN.
-%   dims : vector of positive integers, e.g. 1:15. Eigenvalues for these
-%          component indices are compared against the null.
-%   pars : struct with fields (see diagnostics.pars.ParallelAnalysis):
-%          .nShuffle (default 200)
-%          .alpha    (default 0.05)
-%          .rngSeed  (default 0)
-%          .mode     'neuronwise' | 'rowperm' (default 'neuronwise')
+%   X     : T x N matrix (T samples, N neurons/features). Must not contain
+%           NaN.
+%   dims  : vector of positive integers, e.g. 1:15. Eigenvalues for these
+%           component indices are compared against the null.
+%   pars  : struct with fields (see diagnostics.pars.ParallelAnalysis):
+%           .nShuffle (default 200)
+%           .alpha    (default 0.05)
+%           .rngSeed  (default 0)
+%           .mode     'neuronwise' | 'rowperm' (default 'neuronwise')
+%           .verbose  logical (default true) - print progress
+%   label : (optional) string label displayed in progress output, e.g.
+%           'Animal.Session'.  Defaults to ''.
 %
 %   Outputs
 %   -------
@@ -71,10 +74,14 @@ end
 if nargin < 3 || isempty(pars)
     pars = diagnostics.pars.ParallelAnalysis();
 end
+if nargin < 4 || isempty(label)
+    label = '';
+end
 nShuffle = pars.nShuffle;
 alpha    = pars.alpha;
 rngSeed  = pars.rngSeed;
 mode     = pars.mode;
+verbose  = isfield(pars,'verbose') && pars.verbose;
 
 % --- RNG ---
 if ~isempty(rngSeed)
@@ -101,11 +108,24 @@ eigReal = i_pca_eigs(X, max(dims));
 eigReal = eigReal(dims);
 
 % --- Null distribution ---
+if verbose
+    if ~isempty(label)
+        fprintf(1, '\n  Parallel analysis [%s]: shuffle %d/%d', label, 0, nShuffle);
+    else
+        fprintf(1, '\n  Parallel analysis: shuffle %d/%d', 0, nShuffle);
+    end
+end
 eigNull = zeros(nShuffle, numel(dims));
 for ss = 1:nShuffle
     Xshuf = i_shuffle(X, mode);
     eigs_all = i_pca_eigs(Xshuf, max(dims));
     eigNull(ss, :) = eigs_all(dims);
+    if verbose
+        fprintf(1, '\b\b\b\b\b\b\b\b\b\b\b\b\b%d/%d', ss, nShuffle);
+    end
+end
+if verbose
+    fprintf(1, ' done.\n');
 end
 
 % --- Null quantile and dimension selection ---

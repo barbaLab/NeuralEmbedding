@@ -85,8 +85,14 @@ end
 % --- Extract data (concatenate all trials along time axis) ---
 X = i_get_data(obj);
 
+% --- Build label for progress output ---
+label = sprintf('%s.%s', obj.Animal, obj.Session);
+if pars.verbose
+    fprintf(1, '\nSelectDimension [%s]', label);
+end
+
 % --- Run parallel analysis ---
-results = diagnostics.compute.dim_parallel_analysis(X, dims, pars);
+results = diagnostics.compute.dim_parallel_analysis(X, dims, pars, label);
 
 % --- Attach metadata ---
 results.animal  = obj.Animal;

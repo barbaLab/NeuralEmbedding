@@ -2,7 +2,7 @@
 
 This page describes the **manifold diagnostic toolkit** added to NeuralEmbedding.
 It provides robust best-practice diagnostics for reconstructed neural manifolds
-and latent spaces, covering four areas:
+and latent spaces, covering six areas:
 
 | Method | Class method | Underlying compute |
 |--------|-------------|-------------------|
@@ -10,6 +10,11 @@ and latent spaces, covering four areas:
 | B – CV reconstruction | `crossValReconstruct` | `diagnostics.compute.cv_reconstruction` |
 | C – CV decoding + permutation test | `crossValDecode` | `diagnostics.compute.cv_decoding`, `diagnostics.compute.permutation_test` |
 | D – Multi-session alignment | `alignSessions` | `diagnostics.compute.align_procrustes`, `diagnostics.compute.alignment_metrics` |
+| E – Within-session stability | `crossValAlignment` | `diagnostics.compute.intra_alignment` |
+| F – Event-based labels | `labelsFromEvents` | — (utility method) |
+
+All long-running methods print **progress** to the console in the format
+`[Animal.Session]: step N/N done.` Suppress with `pars.verbose = false`.
 
 ---
 
@@ -28,8 +33,11 @@ resB = NE.crossValReconstruct(resA.dStar);
 fprintf('CV Pearson r = %.3f\n', resB.reconCorrMean);
 
 % C) CV decoding + permutation test
-y_trial = ...; % trial-level integer labels
+% Option 1: trial-level integer labels
 resC = NE.crossValDecode(y_trial, resA.dStar);
+% Option 2: build labels from stored events
+y_evts = NE.labelsFromEvents({'Cue','Go'});   % per-time-bin categorical
+resC2 = NE.crossValDecode(y_evts, resA.dStar);
 fprintf('Acc = %.1f%%  p = %.4f\n', resC.accMean*100, resC.pValue);
 
 % D) Align two sessions and activate the aligned subspace
@@ -38,8 +46,14 @@ resD = alignSessions([NE1, NE2]);
 NE2.useAlignment = true;          % get.E / get.W now return aligned data
 fprintf('Disparity = %.4f\n', resD.disparity(end, 2));  % last area, session 2
 
+% E) Within-session stability (intra-session split-half)
+NE.findEmbedding('PCA');
+resE = NE.crossValAlignment();
+fprintf('Intra-session disparity = %.4f ± %.4f\n', ...
+    resE.disparityMean, resE.disparityStd);
+
 % Inspect stored results (all methods auto-save to M_)
-NE.M    % table with ParallelAnalysis, CVReconstruction, CVDecoding entries
+NE.M    % table with ParallelAnalysis, CVReconstruction, CVDecoding, IntraAlignment
 ```
 
 Multi-session methods accept an array of NeuralEmbedding objects and return a
@@ -48,10 +62,12 @@ struct array (one entry per session):
 ```matlab
 NEobjs = [NE1, NE2, NE3];  % vector of NeuralEmbedding objects
 
-% All four methods work with object arrays
-resA = NEobjs.selectDimension(1:15);
-resD = NEobjs.alignSessions();
+% All methods work with object arrays
+resA  = NEobjs.selectDimension(1:15);
+resD  = NEobjs.alignSessions();
+resIA = NEobjs.crossValAlignment();
 ```
+
 
 ---
 
@@ -268,27 +284,113 @@ end
 
 ## Result storage in M_
 
-All three scalar diagnostic methods automatically store their output in the
-object's `M_` property using the same replace-or-append logic as
-`computeMetrics`:
+All diagnostic methods automatically store their output in the object's `M_`
+property using the same replace-or-append logic as `computeMetrics`:
 
 | Method | M_ type field |
 |--------|--------------|
 | `selectDimension` | `'ParallelAnalysis'` |
 | `crossValReconstruct` | `'CVReconstruction'` |
 | `crossValDecode` | `'CVDecoding'` |
-| `alignSessions` (per session) | `'Alignment'` |
+| `alignSessions` (per session) | `'SessionAlignment'` |
+| `crossValAlignment` | `'IntraAlignment'` |
 
 ```matlab
 NE.selectDimension(1:15);
 NE.crossValReconstruct(5);
+NE.crossValAlignment();
 M = NE.M;    % returns table with all stored metrics
-M.type       % ["ParallelAnalysis"; "CVReconstruction"]
+M.type       % ["ParallelAnalysis"; "CVReconstruction"; "IntraAlignment"]
 M.data{1}    % the full results struct for ParallelAnalysis
 ```
 
 Re-running any diagnostic with the same condition/area mask **replaces** the
 previous entry (no duplicates). Set `NE.appendM = true` to keep all runs.
+
+> **Note**: The cross-session alignment type is `'SessionAlignment'` (not
+> `'Alignment'`) to avoid confusion with the pre-existing `alignment` metric
+> computed by `computeMetrics`.
+
+---
+
+## E – Within-session stability (`crossValAlignment`)
+
+### What it tests
+Whether the latent manifold geometry is **reproducible within the session** —
+i.e. whether the manifold learned from a random half of trials matches the
+manifold from the other half.
+
+### Method: random split-half Procrustes
+For each of `nSplit` replicates:
+1. Randomly split all trials into two equal-size groups.
+2. Optionally refit PCA on each group independently (when `dim > 0`);
+   otherwise use the existing latent coordinates.
+3. Align the two latent matrices with orthogonal Procrustes.
+4. Record disparity, principal angles, and distance correlation.
+
+### Interpreting results
+- Low median disparity (close to 0) → manifold is stable within the session.
+- Compare `disparityMean` with the cross-session disparity from `alignSessions`
+  to distinguish genuine session-to-session change from within-session
+  noise/variability.
+- A high within-session disparity relative to the cross-session disparity
+  may indicate that the session itself is non-stationary (e.g. learning, drift).
+
+### Recommended defaults
+
+| Parameter | Default | Notes |
+|-----------|---------|-------|
+| `nSplit` | 100 | 500 for publication |
+| `dim` | 0 (use current E) | Set to `dStar` to refit PCA on each half |
+| `allowScale` | `false` | |
+
+```matlab
+NE.findEmbedding('PCA');
+
+% Use current embedding directly (no refit)
+res = NE.crossValAlignment();
+fprintf('Intra-session disparity = %.4f ± %.4f\n', ...
+    res.disparityMean, res.disparityStd);
+
+% Compare with cross-session alignment
+resX = alignSessions([NE1, NE2]);
+fprintf('Cross-session disparity = %.4f\n', resX.disparity(1,2));
+```
+
+---
+
+## F – Event-based time-bin labels (`labelsFromEvents`)
+
+### What it does
+`labelsFromEvents` converts stored behavioral events into a **per-time-bin
+categorical label vector** that can be passed directly to `crossValDecode` or
+`crossValReconstruct`.
+
+Each time bin in each trial is labelled with the name of the *most recent*
+event (from the requested list) that has occurred up to that bin. Bins before
+the first requested event are labelled `'0'`.
+
+### Usage
+
+```matlab
+% Add events first
+NE.addEvents(evts);   % evts: struct with fields Ts, Name, Trial
+
+% Decode which event epoch each time bin belongs to
+y = NE.labelsFromEvents({'Cue','Go','Reward'});
+% y is a T x 1 categorical with categories '0','Cue','Go','Reward'
+
+% Use directly with crossValDecode
+res = NE.crossValDecode(y, dStar);
+
+% Use all unique event names
+y_all = NE.labelsFromEvents("all");
+```
+
+### Priority tie-breaking
+If two events from the requested list share the same timestamp, the one that
+appears **earlier** in the `eventNames` input wins (i.e. input order
+determines priority).
 
 ---
 
@@ -324,16 +426,18 @@ decoder (e.g. SVM), you can supply a custom `statFcn` to
         dim_parallel_analysis.m   % parallel analysis core
         cv_reconstruction.m       % CV reconstruction core
         cv_decoding.m             % CV decoding core
-        permutation_test.m        % generic permutation test
+        permutation_test.m        % generic permutation test (with progress)
         shuffle_neuronwise.m      % neuron-wise shuffle utility
         circular_shift.m          % circular time-shift utility
         align_procrustes.m        % orthogonal Procrustes alignment
         alignment_metrics.m       % alignment quality metrics
+        intra_alignment.m         % within-session split-half stability
     +pars/
-        ParallelAnalysis.m        % default parameters
+        ParallelAnalysis.m        % default parameters (includes verbose)
         CVReconstruction.m
         CVDecoding.m
         ProcrustesAlignment.m
+        IntraAlignment.m          % parameters for within-session stability
     +shufflers/
         global_permute.m          % global label permuter
         blocked_permute.m         % blocked label permuter
@@ -343,7 +447,9 @@ decoder (e.g. SVM), you can supply a custom `statFcn` to
     selectDimension.m             % class method – dimension selection (auto-saves to M_)
     crossValReconstruct.m         % class method – CV reconstruction (auto-saves to M_)
     crossValDecode.m              % class method – CV decoding (auto-saves to M_)
-    alignSessions.m               % class method – Procrustes alignment (stores E_aligned_, W_aligned_, saves to M_)
+    alignSessions.m               % class method – Procrustes alignment (stores E_aligned_, W_aligned_, saves to M_ as 'SessionAlignment')
+    crossValAlignment.m           % class method – within-session stability (auto-saves to M_ as 'IntraAlignment')
+    labelsFromEvents.m            % utility – build per-time-bin labels from stored events
     i_storeM.m                    % private helper – update M_ with a diagnostic result
 
 examples/

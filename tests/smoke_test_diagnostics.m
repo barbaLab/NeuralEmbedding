@@ -4,10 +4,14 @@
 %   data with known ground-truth properties:
 %
 %     1) dStar from parallel analysis should be near the true latent dim.
-%     2) CV decoding with real labels should be significant (p < 0.05) and
-%        above chance; with random labels it should be non-significant.
-%     3) Procrustes alignment should reduce disparity (or keep it zero for
-%        aligned data).
+%     2) CV reconstruction improves with dimension.
+%     3) CV decoding with real labels should be significant; with random labels not.
+%     4) Cross-session Procrustes alignment: disparity bounded.
+%     4b) useAlignment flag toggles between original / aligned E.
+%     5) Multi-session selectDimension returns struct array.
+%     6) Diagnostic results stored in M_.
+%     7) crossValAlignment: finite disparity distribution, stored in M_.
+%     8) labelsFromEvents: returns categorical with correct length.
 %
 %   All tests print PASS / FAIL to the console. Exits with an error if any
 %   test fails so it can be integrated into automated pipelines.
@@ -22,6 +26,13 @@ clear; clc;
 
 fprintf('Running manifold-diagnostics smoke tests...\n\n');
 nFail = 0;
+
+% Suppress progress output during automated tests
+quietParsPA  = diagnostics.pars.ParallelAnalysis();   quietParsPA.verbose  = false;
+quietParsCVR = diagnostics.pars.CVReconstruction();   quietParsCVR.verbose = false;
+quietParsCVD = diagnostics.pars.CVDecoding();         quietParsCVD.verbose = false;
+quietParsAS  = diagnostics.pars.ProcrustesAlignment(); quietParsAS.verbose = false;
+quietParsIA  = diagnostics.pars.IntraAlignment();     quietParsIA.verbose  = false;
 
 % =========================================================================
 %  Shared synthetic data
@@ -54,7 +65,7 @@ NE = NeuralEmbedding(data, ...
 % =========================================================================
 %  Test 1 – Parallel analysis: dStar near trueD
 % =========================================================================
-pA          = diagnostics.pars.ParallelAnalysis();
+pA          = quietParsPA;
 pA.nShuffle = 100;
 pA.rngSeed  = 0;
 
@@ -67,8 +78,8 @@ fprintf('[Test 1] Parallel analysis  dStar=%d  (true=%d)  ... %s\n', ...
 % =========================================================================
 %  Test 2 – CV reconstruction improves with dim
 % =========================================================================
-pB       = diagnostics.pars.CVReconstruction();
-pB.kfold = 3;
+pB         = quietParsCVR;
+pB.kfold   = 3;
 pB.rngSeed = 0;
 
 r1 = NE.crossValReconstruct(1, pB);
@@ -81,7 +92,7 @@ fprintf('[Test 2] CV reconstruction   r(d=1)=%.3f  r(d=%d)=%.3f  ... %s\n', ...
 % =========================================================================
 %  Test 3 – Decoding: real labels significant, random labels not
 % =========================================================================
-pC          = diagnostics.pars.CVDecoding();
+pC          = quietParsCVD;
 pC.kfold    = 3;
 pC.nPerm    = 200;
 pC.rngSeed  = 0;
@@ -101,7 +112,7 @@ fprintf('[Test 3b] Decoding random labels  acc=%.1f%%  p=%.4f  ... %s\n', ...
     resC_rand.accMean*100, resC_rand.pValue, tf(pass3b));
 
 % =========================================================================
-%  Test 4 – Alignment reduces disparity
+%  Test 4 – Cross-session alignment reduces disparity
 % =========================================================================
 rng(1,'twister');
 R_true  = orth(randn(trueD));   % random rotation
@@ -125,12 +136,18 @@ NEobjs(2).numPC = trueD;
 NEobjs(1).findEmbedding('PCA');
 NEobjs(2).findEmbedding('PCA');
 
-resD = NEobjs.alignSessions();
+resD = NEobjs.alignSessions(quietParsAS);
 % disparity is now nAreas x nSessions; check session 2, any area
 pass = all(resD.disparity(:, 2) <= 1.0);   % disparity should be bounded
 nFail = nFail + ~pass;
 fprintf('[Test 4] Procrustes alignment  max_disparity(sess2)=%.4f  ... %s\n', ...
     max(resD.disparity(:, 2)), tf(pass));
+
+% Check M_ type is 'SessionAlignment' (not 'Alignment')
+M4 = NE2.M;
+pass4type = any(strcmp(M4.type, 'SessionAlignment'));
+nFail = nFail + ~pass4type;
+fprintf('[Test 4c] M_ type = SessionAlignment  ... %s\n', tf(pass4type));
 
 % =========================================================================
 %  Test 4b – useAlignment flag: E changes after alignment activation
@@ -176,6 +193,51 @@ fprintf('[Test 6] Diagnostics stored in M_  types=%s  ... %s\n', ...
     strjoin(types_stored, ', '), tf(pass6));
 
 % =========================================================================
+%  Test 7 – crossValAlignment: finite disparity, stored in M_
+% =========================================================================
+pIA          = quietParsIA;
+pIA.nSplit   = 20;    % few splits for speed
+pIA.rngSeed  = 0;
+
+resIA = NE.crossValAlignment(pIA);
+pass7a = numel(resIA.disparity) == 20 && all(isfinite(resIA.disparity));
+nFail = nFail + ~pass7a;
+fprintf('[Test 7a] crossValAlignment  nSplit=%d  medDisp=%.4f  ... %s\n', ...
+    numel(resIA.disparity), resIA.disparityMedian, tf(pass7a));
+
+M7 = NE.M;
+pass7b = any(strcmp(M7.type, 'IntraAlignment'));
+nFail = nFail + ~pass7b;
+fprintf('[Test 7b] IntraAlignment stored in M_  ... %s\n', tf(pass7b));
+
+% =========================================================================
+%  Test 8 – labelsFromEvents: returns categorical of correct length
+% =========================================================================
+% Add synthetic events to NE: 'Cue' halfway through each trial
+evts = struct('Ts', {}, 'Name', {}, 'Trial', {}, 'Data', {});
+for tr = 1:nTrials
+    evts(end+1).Ts    = time(floor(Ttrial/2));   %#ok<SAGROW>
+    evts(end).Name   = 'Cue';
+    evts(end).Trial  = tr;
+    evts(end).Data   = [];
+end
+NE.addEvents(evts);
+y_evts = NE.labelsFromEvents('Cue');
+T_expected = nTrials * Ttrial;
+pass8a = numel(y_evts) == T_expected && iscategorical(y_evts);
+nFail  = nFail + ~pass8a;
+fprintf('[Test 8a] labelsFromEvents  T=%d (expected %d)  ... %s\n', ...
+    numel(y_evts), T_expected, tf(pass8a));
+
+% Check that exactly half the bins are labelled 'Cue'
+nCue = sum(y_evts == 'Cue');
+nExpCue = nTrials * (Ttrial - floor(Ttrial/2));
+pass8b = (nCue == nExpCue);
+nFail  = nFail + ~pass8b;
+fprintf('[Test 8b] labelsFromEvents  nCue=%d (expected %d)  ... %s\n', ...
+    nCue, nExpCue, tf(pass8b));
+
+% =========================================================================
 %  Summary
 % =========================================================================
 fprintf('\n');
@@ -190,3 +252,4 @@ end
 function s = tf(pass)
     if pass, s = 'PASS'; else, s = 'FAIL'; end
 end
+

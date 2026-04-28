@@ -21,4 +21,5 @@ function pars = CVReconstruction()
 pars.kfold   = 5;
 pars.rngSeed = 0;
 pars.zscore  = true;
+pars.verbose = true;
 end

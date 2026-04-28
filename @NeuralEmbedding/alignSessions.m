@@ -13,7 +13,7 @@ function results = alignSessions(objs, pars)
 %       populated with the rotation-transformed embeddings.
 %     - Setting OBJ.useAlignment = true makes get.E and get.W return the
 %       aligned subspace instead of the original one.
-%     - Each object's M_ is updated with an 'Alignment' entry (same logic
+%     - Each object's M_ is updated with a 'SessionAlignment' entry (same logic
 %       as computeMetrics; re-running replaces the previous result).
 %
 %   RESULTS = ALIGNSESSIONS(OBJS, PARS) overrides default alignment
@@ -49,7 +49,7 @@ function results = alignSessions(objs, pars)
 %   Per object OBJ = OBJS(ss):
 %     - OBJ.E_aligned_  is populated with the rotation-transformed embedding.
 %     - OBJ.W_aligned_  is populated with the rotation-transformed loadings.
-%     - OBJ.M_ receives an 'Alignment' entry via i_storeM.
+%     - OBJ.M_ receives an 'SessionAlignment' entry via i_storeM.
 %   To activate the aligned subspace set OBJ.useAlignment = true.
 %   To deactivate set OBJ.useAlignment = false.
 %
@@ -123,6 +123,7 @@ for aa = 1:nAreas
 end
 
 % --- Per-area alignment ---
+verbose = isfield(pars,'verbose') && pars.verbose;
 for aa = 1:nAreas
     areaStr = refAreas(aa);
 
@@ -147,6 +148,13 @@ for aa = 1:nAreas
 
     for ss = 1:nSess
         if ss == refSess, continue; end
+
+        if verbose
+            refLabel  = sprintf('%s.%s', objs(refSess).Animal, objs(refSess).Session);
+            sessLabel = sprintf('%s.%s', objs(ss).Animal, objs(ss).Session);
+            fprintf(1, '\n  AlignSessions [area=%s]: %s → %s', ...
+                areaStr, sessLabel, refLabel);
+        end
 
         % Locate matching area in this session
         aaSess = find(ismember(objs(ss).UArea, areaStr));
@@ -247,6 +255,6 @@ for ss = 1:nSess
     sessData.distCorr           = distCorr(:, ss);
     sessData.refSession         = refSess;
     sessData.areas              = refAreas;
-    objs(ss).i_storeM(sessData, 'Alignment');
+    objs(ss).i_storeM(sessData, 'SessionAlignment');
 end
 end

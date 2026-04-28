@@ -35,4 +35,5 @@ pars.nPerm    = 500;
 pars.rngSeed  = 0;
 pars.decoder  = 'nearestCentroid';
 pars.permMode = 'global';
+pars.verbose  = true;
 end
