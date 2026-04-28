@@ -194,7 +194,8 @@ for aa = 1:nAreas
             Ec = E_tmp{tr, aaSess};
             if isempty(Ec) || size(Ec,2) == 0, continue; end
             nrows = min(d_ss, size(Ec, 1));
-            Ec(1:nrows, :) = sc * (R' * Ec(1:nrows, :));
+            % Slice R' to nrows x nrows to handle d_full < d_ss edge case
+            Ec(1:nrows, :) = sc * (R(1:nrows, 1:nrows)' * Ec(1:nrows, :));
             E_tmp{tr, aaSess} = Ec;
         end
         objs(ss).E_aligned_ = E_tmp;
@@ -203,7 +204,8 @@ for aa = 1:nAreas
         Wss = objs(ss).W_aligned_{aaSess};
         if ~isempty(Wss)
             nrows_W = min(d_ss, size(Wss, 1));
-            Wss(1:nrows_W, :) = sc * (R' * Wss(1:nrows_W, :));
+            % Slice R' to nrows_W x nrows_W to handle dim mismatch
+            Wss(1:nrows_W, :) = sc * (R(1:nrows_W, 1:nrows_W)' * Wss(1:nrows_W, :));
             objs(ss).W_aligned_{aaSess} = Wss;
         end
 
