@@ -30,13 +30,26 @@ function results = selectDimension(obj, dims, pars)
 %   Outputs
 %   -------
 %   results : struct (or struct array for multiple sessions) with fields
-%       .eigReal      - real eigenvalues for tested dims.
-%       .eigNull      - (nShuffle x numel(dims)) null eigenvalue matrix.
-%       .nullQuantile - (1-alpha) null quantile per dim.
-%       .dimsTested   - dims vector used.
-%       .dStar        - selected dimension.
+%       .eigReal         - real eigenvalues for tested dims.
+%       .eigNull         - (nShuffle x numel(dims)) null eigenvalue matrix.
+%       .nullQuantile    - (1-alpha) null quantile per dim.
+%       .dimsTested      - dims vector used.
+%       .dStar           - selected dimension.
 %       .alpha, .nShuffle, .rngSeed, .mode - parameters used.
-%       .animal, .session - metadata from the NeuralEmbedding object.
+%       .animal, .session        - metadata from the NeuralEmbedding object.
+%       .embeddingMethod - embedding method used (from obj.currentEmbeddingMethod).
+%
+%   Projection pipeline
+%   -------------------
+%   The null eigenspectrum is built using the same projection pipeline as
+%   obj.findEmbedding:
+%     * For PCA / SmoothPCA  — covariance PCA (centre only, no extra
+%       z-score).  obj.S already applies any z-scoring configured on the
+%       object, so double-standardising is avoided.  This matches
+%       embedding.PCA.reduce / MATLAB's pca() exactly.
+%     * For GPFA / CCA / other — a warning is issued and PCA on the
+%       smoothed data is used as an approximation.  For rigorous dimension
+%       selection with those methods use crossValReconstruct.
 %
 %   Example
 %   -------
@@ -82,35 +95,83 @@ else
     pars = NeuralEmbedding.mergestructs(defaultPars, pars);
 end
 
-% --- Extract data (concatenate all trials along time axis) ---
-X = i_get_data(obj);
-
 % --- Build label for progress output ---
 label = sprintf('%s.%s', obj.Animal, obj.Session);
 if pars.verbose
     fprintf(1, '\nSelectDimension [%s]', label);
 end
 
+% --- Extract data (concatenate all trials along time axis) ---
+% obj.S already applies z-scoring / preprocessing set on the object, so we
+% do NOT z-score again inside dim_parallel_analysis (projFcn is used).
+X = i_get_data(obj);
+
+% --- Build projection function matching the object's embedding method ----
+% This ensures the null distribution is built with exactly the same
+% pipeline as findEmbedding, making the comparison statistically valid.
+embMethod = char(obj.currentEmbeddingMethod);
+projFcn   = i_build_proj_fcn(embMethod, label);
+
 % --- Run parallel analysis ---
-results = diagnostics.compute.dim_parallel_analysis(X, dims, pars, label);
+results = diagnostics.compute.dim_parallel_analysis(X, dims, pars, label, projFcn);
 
 % --- Attach metadata ---
-results.animal  = obj.Animal;
-results.session = obj.Session;
+results.animal          = obj.Animal;
+results.session         = obj.Session;
+results.embeddingMethod = embMethod;
 
 % --- Store in M_ ---
 obj.i_storeM(results, 'ParallelAnalysis');
 end
 
 % =========================================================================
-%  Local helper
+%  Local helpers
 % =========================================================================
 function X = i_get_data(obj)
-% Concatenate smoothed, z-scored trials (from obj.S) into T x N matrix.
-% Uses the first area column (respects current aMask setting).
+% Concatenate preprocessed (smoothed + obj-z-scored) trials (from obj.S)
+% into T x N matrix.  Uses the first area column (respects current aMask).
+% NOTE: obj.S already applies z-scoring if obj.zscore=true, so dim_parallel_analysis
+% should NOT z-score again — achieved by passing a projFcn.
 S = obj.S;
 % S is a cell (nTrials x nAreas); use first area column
 S = S(:, 1);
 % Each cell is nUnits x nTimeBins; transpose to nTimeBins x nUnits, then vertcat
 X = cell2mat(cellfun(@(s) s', S, 'UniformOutput', false));
+end
+
+function projFcn = i_build_proj_fcn(embMethod, label)
+% Build the eigenvalue-extraction function that matches the embedding method.
+%
+% For PCA / SmoothPCA: use covariance PCA (centre only, no z-score), which
+% matches embedding.PCA.reduce / MATLAB's pca() behaviour.
+%
+% For other methods (GPFA, CCA, …): parallel analysis in the PCA sense is
+% not directly applicable.  We warn the user and fall back to covariance
+% PCA on the smoothed data as a useful approximation.  For rigorous
+% dimensionality selection with non-PCA methods, use crossValReconstruct.
+switch upper(strtrim(embMethod))
+    case {'PCA', 'SMOOTHPCA', ''}
+        % Covariance PCA — matches embedding.PCA.reduce (pca() centers only)
+    otherwise
+        warning('NeuralEmbedding:selectDimension:methodMismatch', ...
+            ['Parallel analysis uses PCA eigenvalues, but the current ' ...
+             'embedding method for [%s] is ''%s''. ' ...
+             'Results are still meaningful as a baseline, but consider ' ...
+             'crossValReconstruct for dimension selection with non-PCA ' ...
+             'embeddings.'], label, embMethod);
+end
+% Covariance PCA (centre only) — matches embedding.PCA.reduce in all cases
+projFcn = @(X, maxK) i_pca_eigs_cov(X, maxK);
+end
+
+function eigs = i_pca_eigs_cov(X, maxK)
+% Covariance-PCA eigenvalues (centre only, no z-score).
+% Equivalent to MATLAB's pca() and embedding.PCA.reduce, but toolbox-free.
+% X must already be preprocessed (e.g. obj.S applies z-scoring if needed).
+[T, N] = size(X);
+maxK   = min(maxK, min(T, N) - 1);
+X      = X - mean(X, 1);          % centre columns (pca() default)
+[~, S, ~] = svd(X, 'econ');       % economy SVD, singular values descending
+sv     = diag(S);
+eigs   = (sv(1:maxK).^2 / (T - 1))';  % covariance eigenvalues
 end

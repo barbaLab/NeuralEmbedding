@@ -1,4 +1,4 @@
-function results = dim_parallel_analysis(X, dims, pars, label)
+function results = dim_parallel_analysis(X, dims, pars, label, projFcn)
 %DIM_PARALLEL_ANALYSIS Shuffle-based dimension selection (parallel analysis).
 %
 %   RESULTS = diagnostics.compute.dim_parallel_analysis(X, DIMS, PARS)
@@ -13,7 +13,10 @@ function results = dim_parallel_analysis(X, dims, pars, label)
 %   Inputs
 %   ------
 %   X     : T x N matrix (T samples, N neurons/features). Must not contain
-%           NaN.
+%           NaN.  When PROJFCN is provided, X should already have been
+%           preprocessed to match the embedding pipeline (e.g. z-scored by
+%           obj.S if using the NeuralEmbedding class method); the internal
+%           z-score step is skipped.
 %   dims  : vector of positive integers, e.g. 1:15. Eigenvalues for these
 %           component indices are compared against the null.
 %   pars  : struct with fields (see diagnostics.pars.ParallelAnalysis):
@@ -24,6 +27,17 @@ function results = dim_parallel_analysis(X, dims, pars, label)
 %           .verbose  logical (default true) - print progress
 %   label : (optional) string label displayed in progress output, e.g.
 %           'Animal.Session'.  Defaults to ''.
+%   projFcn : (optional) function handle  @(X_matrix, maxK) -> eigenvalues
+%           where eigenvalues is a 1 x maxK row vector.
+%           When provided:
+%             * X is treated as already preprocessed (no internal z-scoring).
+%             * Both real-data and shuffled-data eigenvalues are obtained by
+%               calling projFcn.
+%             * This lets the caller inject the same projection pipeline as
+%               the embedding method (e.g. embedding.PCA).
+%           When empty or omitted:
+%             * Legacy behaviour — X is z-scored internally, then eigenvalues
+%               are extracted via base-MATLAB SVD (toolbox-free).
 %
 %   Outputs
 %   -------
@@ -40,10 +54,11 @@ function results = dim_parallel_analysis(X, dims, pars, label)
 %
 %   Notes
 %   -----
-%   * X is z-scored once before eigendecomposition (using all-data
-%     statistics). This is appropriate for dimension selection; the
-%     class-method wrapper performs train-only z-scoring for CV tasks.
-%   * Requires only base MATLAB (no Statistics Toolbox).
+%   * When called via NeuralEmbedding.selectDimension, projFcn is
+%     automatically set to match the object's embedding method so that the
+%     null distribution is built with the same pipeline as findEmbedding.
+%   * When called standalone, the built-in z-score + SVD path is used.
+%   * Requires only base MATLAB (no Statistics Toolbox) in standalone mode.
 %
 %   Example
 %   -------
@@ -77,6 +92,9 @@ end
 if nargin < 4 || isempty(label)
     label = '';
 end
+if nargin < 5
+    projFcn = [];
+end
 nShuffle = pars.nShuffle;
 alpha    = pars.alpha;
 rngSeed  = pars.rngSeed;
@@ -90,8 +108,19 @@ end
 
 [T, N] = size(X);
 
-% Global z-score (appropriate for dimension selection)
-X = zscore(X, 0, 1);  % zero-mean unit-variance per column
+% --- Preprocessing --------------------------------------------------------
+% When a projFcn is provided by the caller (e.g. from selectDimension using
+% the object's embedding pipeline), X is assumed to be already preprocessed
+% (obj.S applies z-scoring internally when obj.zscore=true).  No extra
+% z-scoring is performed here to avoid double-standardising.
+%
+% When projFcn is empty (standalone / legacy call), z-score X before the
+% built-in SVD path.  This is appropriate for raw data not pre-processed
+% by a NeuralEmbedding object.
+useCustomProj = ~isempty(projFcn);
+if ~useCustomProj
+    X = zscore(X, 0, 1);  % standardise columns for standalone / legacy mode
+end
 
 % Cap dims at min(T,N)-1.
 % After mean-centering, the rank of X is at most min(T,N)-1, so at most
@@ -104,8 +133,12 @@ if isempty(dims)
 end
 
 % --- Real eigenvalues ---
-eigReal = i_pca_eigs(X, max(dims));
-eigReal = eigReal(dims);
+if useCustomProj
+    eigAll  = projFcn(X, max(dims));
+else
+    eigAll  = i_pca_eigs(X, max(dims));
+end
+eigReal = eigAll(dims);
 
 % --- Null distribution ---
 if verbose
@@ -119,7 +152,11 @@ eigNull = zeros(nShuffle, numel(dims));
 prevLen = 0;
 for ss = 1:nShuffle
     Xshuf = i_shuffle(X, mode);
-    eigs_all = i_pca_eigs(Xshuf, max(dims));
+    if useCustomProj
+        eigs_all = projFcn(Xshuf, max(dims));
+    else
+        eigs_all = i_pca_eigs(Xshuf, max(dims));
+    end
     eigNull(ss, :) = eigs_all(dims);
     if verbose
         msg = sprintf('%d/%d', ss, nShuffle);
@@ -161,6 +198,7 @@ end
 function eigs = i_pca_eigs(X, maxK)
 % Return eigenvalues (descending) for the first maxK components.
 % Uses economy SVD of centred X for numerical stability; no toolbox needed.
+% NOTE: X is assumed to have already been z-scored by the caller.
 [T, N] = size(X);
 maxK   = min(maxK, min(T, N) - 1);
 X      = X - mean(X, 1);               % centre columns
