@@ -1259,7 +1259,11 @@ classdef NeuralEmbedding < handle & ...
             t = [t{closestIdx}];
 
             % Prepare event-overlay data (unique names, colours, markers)
-            evts = obj.Events_(ismember([obj.Events_.Name],string(eventToPlot)));
+            if not(isempty(obj.Events_))
+                evts = obj.Events_(ismember([obj.Events_.Name],string(eventToPlot)));
+            else
+                evts = obj.Events_;
+            end
             hasEvents = ~isempty(evts);
             if hasEvents
                 evtNames  = string({evts.Name});
