@@ -64,6 +64,9 @@ classdef NeuralEmbedding < handle & ...
         % MCCA regularization parameter
         mcca_k                  = 0.9;  % Add this line
 
+        % Alignment
+        useAlignment            = false                                     % (logical) When true, get.E and get.W return the aligned subspace stored by alignSessions.
+
         % General
         useGpu                  = false
         useParallel             = false
@@ -111,6 +114,7 @@ classdef NeuralEmbedding < handle & ...
         Events_ = struct('Ts',{},'Name',{},'Trial',{},'Data',{});          % Events struct array (Ts, name, trial, data)
         W_ cell                                                            % projection matrix
         Winv_ cell                                                         % inverse projection matrix
+        W_aligned_ cell = {}                                               % aligned projection matrix (populated by alignSessions)
         mu  double = 0                                                     % per unit mean 
         ss  double = 1                                                     % per unit variance 
         subsampling double = 1                                             % subsampling, it is updated after binning
@@ -126,6 +130,7 @@ classdef NeuralEmbedding < handle & ...
         P_ cell                                                             % prepro data, ie binned and pruned for inactive neurons
         S_ cell                                                             % Smoothed data
         E_ cell                                                             % Embedded data
+        E_aligned_ cell = {}                                               % aligned embedded data (populated by alignSessions; Transient so loadobj re-uses W_aligned_)
     end
     
     %% Constructor
@@ -407,7 +412,12 @@ classdef NeuralEmbedding < handle & ...
         function value = get.E(obj)
             amask = ismember(obj.UArea,obj.aMask_);
             cmask = obj.cMask;
-            value = obj.E_(cmask,amask);
+            if obj.useAlignment && ~isempty(obj.E_aligned_)
+                src = obj.E_aligned_;
+            else
+                src = obj.E_;
+            end
+            value = src(cmask,amask);
             value = cellfun(@(e)e(1:obj.numPC,:),value, ...
                 'UniformOutput',false,'ErrorHandler',@(S,n)errorFunc(S,obj.numPC));
 
@@ -419,7 +429,12 @@ classdef NeuralEmbedding < handle & ...
 
         function value = get.W(obj)
             amask = ismember(obj.UArea,obj.aMask_);
-            value = obj.W_(amask);
+            if obj.useAlignment && ~isempty(obj.W_aligned_)
+                src = obj.W_aligned_;
+            else
+                src = obj.W_;
+            end
+            value = src(amask);
             value = cellfun(@(w)w(1:obj.numPC,:),value, ...
                 'UniformOutput',false,'ErrorHandler',@(S,n)errorFunc(S,obj.numPC));
             function e = errorFunc(S,varargin)
@@ -1210,6 +1225,28 @@ classdef NeuralEmbedding < handle & ...
     %% Compute manifold metrices
     methods (Access=public)
          flag = computeMetrics(obj,type)
+    end
+
+    %% Manifold diagnostics
+    methods (Access=public)
+        % Shuffle-based dimension selection (parallel analysis)
+        results = selectDimension(obj, dims, pars)
+        % Cross-validated PCA reconstruction
+        results = crossValReconstruct(obj, dim, pars)
+        % Cross-validated decoding + permutation test
+        results = crossValDecode(obj, y, dim, pars)
+        % Align latent spaces across sessions via Procrustes
+        results = alignSessions(obj, pars)
+        % Within-session latent-space stability (random trial splits)
+        results = crossValAlignment(obj, pars)
+        % Build a per-time-bin label vector from stored events
+        y = labelsFromEvents(obj, eventNames)
+    end
+
+    %% Private helpers
+    methods (Access=private)
+        % Store a diagnostic result struct in M_ (same update logic as computeMetrics)
+        i_storeM(obj, data, type)
     end
 
     %% Plot data
